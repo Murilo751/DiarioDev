@@ -46,6 +46,7 @@
     .records-actions label { margin: 0; }
     .records select { padding: 9px; color: #fff; background: #101827; border: 1px solid #52637a; border-radius: 9px; }
     .records button { width: auto; margin: 0; padding: 10px 16px; }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
     .records button:disabled { opacity: .5; cursor: not-allowed; }
     .table-wrap { overflow-x: auto; margin: 24px 0; }
     table { width: 100%; border-collapse: collapse; text-align: left; }
@@ -119,7 +120,10 @@
   <section id="records-view" class="records hidden" aria-label="Registros de estudo">
     <div class="records-header">
       <div><h2>Seus registros</h2><p>Consulte e organize o que você estudou.</p></div>
-      <button id="delete-record" class="secondary" type="button" disabled>Excluir selecionado</button>
+      <div class="header-actions">
+        <button id="duplicate-record" class="secondary" type="button" disabled>Duplicar selecionado</button>
+        <button id="delete-record" class="secondary" type="button" disabled>Excluir selecionado</button>
+      </div>
     </div>
     <div class="records-actions">
       <label for="record-sort">Ordenar por</label>
@@ -388,6 +392,7 @@
       const requestSequence = ++listRequestSequence;
       selectedId = null;
       document.getElementById('delete-record').disabled = true;
+      document.getElementById('duplicate-record').disabled = true;
       listMessage.textContent = '';
       try {
         const params = new URLSearchParams({
@@ -418,6 +423,7 @@
           radio.addEventListener('change', () => {
             selectedId = record.id;
             document.getElementById('delete-record').disabled = false;
+            document.getElementById('duplicate-record').disabled = false;
           });
           selectionCell.append(radio);
           row.append(selectionCell);
@@ -461,6 +467,28 @@
     });
     document.getElementById('previous-page').addEventListener('click', () => { currentPage--; loadRecords(); });
     document.getElementById('next-page').addEventListener('click', () => { currentPage++; loadRecords(); });
+    document.getElementById('duplicate-record').addEventListener('click', async () => {
+      if (selectedId === null) return;
+      const button = document.getElementById('duplicate-record');
+      button.disabled = true;
+      listMessage.textContent = '';
+      try {
+        const response = await fetch('/api/web/records/' + selectedId + '/duplicate', { method: 'POST' });
+        if (response.status === 401) { showLogin(); return; }
+        if (response.status !== 201) {
+          listMessage.textContent = response.status === 404 ? 'Registro não encontrado.' : 'Não foi possível duplicar o registro.';
+          return;
+        }
+        const copy = await response.json();
+        await loadRecords();
+        listMessage.textContent = 'Registro duplicado como #' + copy.id + '.';
+      } catch (_) {
+        listMessage.textContent = 'Não foi possível conectar à API.';
+      } finally {
+        button.disabled = selectedId === null;
+      }
+    });
+
     document.getElementById('delete-record').addEventListener('click', async () => {
       if (selectedId === null || !window.confirm('Excluir o registro selecionado?')) return;
       const button = document.getElementById('delete-record');
