@@ -26,6 +26,7 @@ def log_event(level, operation, status, request_id, message, client="web"):
     }), flush=True)
 
 
+STATUSES = ("active", "inactive")
 TEXT_LIMITS = {"title": 120, "topic": 60, "summary": 1000}
 
 
@@ -61,7 +62,7 @@ def validate_record(body):
 def serialize_record(row):
     return {
         "id": row[0], "title": row[1], "topic": row[2], "summary": row[3],
-        "study_date": row[4].isoformat(), "minutes": row[5],
+        "study_date": row[4].isoformat(), "minutes": row[5], "status": row[6],
     }
 
 
@@ -237,5 +238,25 @@ def create_app(config=None, initialize=True):
     def cli_me():
         log_event("INFO", "me", "success", g.request_id, "CLI token accepted", "cli")
         return jsonify(username=g.cli_user["username"])
+
+
+    @app.patch("/api/web/records/<int:record_id>/status")
+    @login_required("status")
+    def change_status(record_id):
+        body = request.get_json(silent=True)
+        status = body.get("status") if isinstance(body, dict) else None
+        if status not in STATUSES:
+            log_event("WARN", "status", "error", g.request_id, "Invalid status")
+            return jsonify(errors={"status": "Use active ou inactive"}), 400
+        try:
+            row = db.update_status(app.config["DATABASE_URL"], record_id, status, g.request_id)
+        except Exception:
+            log_event("ERROR", "status", "error", g.request_id, "Record status update failed")
+            return jsonify(error="Record unavailable"), 503
+        if row is None:
+            log_event("WARN", "status", "error", g.request_id, "Record not found")
+            return jsonify(error="Record not found"), 404
+        log_event("INFO", "status", "success", g.request_id, "Status do registro atualizado")
+        return jsonify(serialize_record(row))
 
     return app

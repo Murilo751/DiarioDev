@@ -43,6 +43,7 @@ Se o banco informar `Database is uninitialized and superuser password is not spe
 | `POST /api/web/logout` | Sessão | Encerra a sessão ou retorna `401` |
 | `POST /api/web/records` | Sessão | Cria um registro (`201`), ou retorna `400` com `errors` por campo / `401` |
 | `PUT /api/web/records/{id}` | Sessão | Edita um registro (`200`), ou retorna `400` / `401` / `404` |
+| `PATCH /api/web/records/{id}/status` | Sessão | Recebe `{"status":"active"\|"inactive"}`; retorna o registro (`200`), `400` / `401` / `404` |
 
 O cookie da sessão é `HttpOnly` e `SameSite=Lax`. A página acessa a API pela mesma origem usando o proxy do Nginx. Rotas funcionais adicionadas nas próximas issues também deverão exigir sessão válida.
 
@@ -114,6 +115,17 @@ Para automações que já fornecem a senha pela entrada padrão, `token --userna
 | `GET /api/cli/me` | Bearer token | Retorna o usuário autenticado ou `401` |
 
 Os endpoints CLI são separados dos endpoints Web. O token é assinado com `SESSION_SECRET` e não é registrado nos logs. A autenticação por token pode ser reutilizada pelos comandos de registros das próximas issues.
+
+
+## Status do registro na Web (issue #13)
+
+Todo registro tem um status `active` (padrão) ou `inactive`, salvo na coluna `records.status` (adicionada automaticamente na inicialização da API). Ao editar um registro, a página mostra o status atual e o botão **Ativar/Desativar**, que chama `PATCH /api/web/records/{id}/status` e persiste a mudança no PostgreSQL. As respostas de registros incluem o campo `status`.
+
+```sh
+curl -b cookies.txt -X PATCH -H 'Content-Type: application/json' -d '{"status":"inactive"}' http://localhost:8080/api/web/records/1/status
+```
+
+Logs: a API registra `status` e `db.py` registra `update_status`, com o mesmo `request_id`.
 
 ## Banco e logs
 
