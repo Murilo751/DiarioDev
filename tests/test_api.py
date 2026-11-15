@@ -623,3 +623,31 @@ def test_cli_search_invalid_parameters_and_database_failure(monkeypatch, setting
 
     monkeypatch.setattr(api.db, "search_records_cli", fail)
     assert client.get("/api/cli/records/search", headers=headers).status_code == 503
+
+
+def test_duplicate_requires_login(settings):
+    client = api.create_app(settings, initialize=False).test_client()
+    assert client.post("/api/web/records/1/duplicate").status_code == 401
+
+
+def test_duplicate_record_success_missing_and_failure(monkeypatch, settings, capsys):
+    client = logged_in_client(monkeypatch, settings)
+    calls = []
+    copy = (2,) + ROW[1:]
+    monkeypatch.setattr(api.db, "duplicate_record", lambda *args: calls.append(args) or copy)
+    capsys.readouterr()
+    response = client.post("/api/web/records/1/duplicate")
+    assert response.status_code == 201 and response.json["id"] == 2
+    assert response.json["title"] == ROW[1] and response.json["status"] == "active"
+    assert calls[0][1:3] == (1, "student")
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "duplicate" and event["request_id"] == calls[0][3]
+
+    monkeypatch.setattr(api.db, "duplicate_record", lambda *_: None)
+    assert client.post("/api/web/records/99/duplicate").status_code == 404
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "duplicate_record", fail)
+    assert client.post("/api/web/records/1/duplicate").status_code == 503

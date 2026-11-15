@@ -107,6 +107,22 @@ Selecione um registro pela primeira coluna e clique em **Excluir selecionado**. 
 
 `GET /api/web/records` aceita `page` (inteiro a partir de 1), `sort` (`study_date`, `title`, `topic` ou `minutes`) e `direction` (`asc` ou `desc`). Os padrões são `page=1`, `sort=study_date` e `direction=desc`. A resposta contém `items`, `page`, `page_size`, `total` e `total_pages`; parâmetros inválidos retornam `400`. O registro inexistente retorna `404` na exclusão. Listagem e exclusão exigem login e geram logs JSON correlacionados nas camadas API e banco.
 
+## Duplicação na Web (issue #15)
+
+Selecione um registro na tabela e clique em **Duplicar selecionado**. A página chama `POST /api/web/records/{id}/duplicate`, que cria no PostgreSQL uma **cópia com ID próprio** (título, assunto, resumo, data do estudo, minutos e status iguais aos do original; o autor da cópia é o usuário logado). O registro original **não é alterado**. A tabela é recarregada e a mensagem informa o ID da cópia (por exemplo, `Registro duplicado como #12.`).
+
+| Método e rota | Acesso | Resultado |
+|---|---|---|
+| `POST /api/web/records/{id}/duplicate` | Sessão | Cria a cópia e retorna o novo registro (`201`); `404` se o ID não existe, `401` sem sessão |
+
+Exemplo pelo terminal (com a sessão de login em `cookies.txt`):
+
+```sh
+curl -b cookies.txt -X POST http://localhost:8080/api/web/records/1/duplicate
+```
+
+Logs: a API registra `duplicate` e `db.py` registra `duplicate`, com o mesmo `request_id`.
+
 ## Busca avançada na Web (issue #4)
 
 Após o login, use os filtros **Autor**, **Categoria (assunto)** e **período** (De/Até) acima da tabela. Clique em **Buscar** para atualizar os resultados sem recarregar a página. Os filtros podem ser combinados; **Limpar filtros** volta à listagem completa. A ordenação e a paginação de cinco itens continuam funcionando nos resultados filtrados.

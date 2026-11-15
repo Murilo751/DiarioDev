@@ -340,3 +340,24 @@ def test_search_records_cli_combines_filters_and_logs_cli_reads(monkeypatch, cap
     with pytest.raises(RuntimeError):
         db.search_records_cli("database-url", filters, 1, 5, "title", "asc", "req-cli-error")
     assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+
+def test_duplicate_record_found_missing_and_failure(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (9, "Git", "Worktree", "Estudo", "2026-11-15", 30, "inactive")
+    assert db.duplicate_record("database-url", 7, "student", "req-dup")[0] == 9
+    sql, params = cursor.execute.call_args.args
+    assert sql.startswith("INSERT INTO records") and "FROM records WHERE id = %s" in sql
+    assert params == ("student", 7)
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "web" and event["operation"] == "duplicate"
+    assert event["layer"] == "db" and event["request_id"] == "req-dup"
+
+    cursor.fetchone.return_value = None
+    assert db.duplicate_record("database-url", 8, "student", "req-dup-missing") is None
+    assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.duplicate_record("database-url", 7, "student", "req-dup-error")
+    assert json.loads(capsys.readouterr().out)["level"] == "ERROR"

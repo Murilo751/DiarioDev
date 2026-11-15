@@ -381,3 +381,25 @@ def search_records_cli(database_url, filters, page, page_size, sort, direction, 
     except Exception:
         log_event("ERROR", "cli", "search", "error", request_id, "Record search failed")
         raise
+
+
+def duplicate_record(database_url, record_id, author, request_id):
+    """Insert a copy of a record (new ID, current author) and return it, or None when missing."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO records (title, topic, summary, study_date, minutes, status, author) "
+                    "SELECT title, topic, summary, study_date, minutes, status, %s "
+                    "FROM records WHERE id = %s RETURNING " + RECORD_COLUMNS,
+                    (author, record_id),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            log_event("WARN", "web", "duplicate", "error", request_id, "Record not found")
+        else:
+            log_event("INFO", "web", "duplicate", "success", request_id, "Record duplicated")
+        return row
+    except Exception:
+        log_event("ERROR", "web", "duplicate", "error", request_id, "Record duplication failed")
+        raise

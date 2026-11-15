@@ -318,6 +318,21 @@ def create_app(config=None, initialize=True):
                      "Cache-Control": "no-store"},
         )
 
+    @app.post("/api/web/records/<int:record_id>/duplicate")
+    @login_required("duplicate")
+    def duplicate_record(record_id):
+        try:
+            row = db.duplicate_record(app.config["DATABASE_URL"], record_id,
+                                      session["username"], g.request_id)
+        except Exception:
+            log_event("ERROR", "duplicate", "error", g.request_id, "Record duplication failed")
+            return jsonify(error="Record unavailable"), 503
+        if row is None:
+            log_event("WARN", "duplicate", "error", g.request_id, "Record not found")
+            return jsonify(error="Record not found"), 404
+        log_event("INFO", "duplicate", "success", g.request_id, "Registro duplicado")
+        return jsonify(serialize_record(row)), 201
+
     @app.delete("/api/web/records/<int:record_id>")
     @login_required("delete")
     def delete_record(record_id):
