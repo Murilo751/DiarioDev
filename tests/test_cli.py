@@ -162,6 +162,34 @@ def test_list_and_delete_report_api_errors(monkeypatch, capsys):
     assert "HTTP 401" in capsys.readouterr().err
 
 
+def test_status_command_calls_only_the_cli_endpoint(monkeypatch, capsys):
+    calls = []
+
+    def request_api(*args, **kwargs):
+        calls.append((args, kwargs))
+        return 200, {"id": 17, "status": args[3]["status"]}
+
+    monkeypatch.setattr(cli, "call_api", request_api)
+    monkeypatch.setenv("DIARIODEV_TOKEN", "env-token")
+    assert cli.main(["status", "17", "inactive"]) == 0
+    assert cli.main(["status", "17", "active"]) == 0
+    assert calls[0] == (("http://api:8000", "/api/cli/records/17/status", "PATCH",
+                         {"status": "inactive"}, "env-token"), {})
+    assert capsys.readouterr().out.splitlines() == ["Registro #17: inativo.", "Registro #17: ativo."]
+
+
+def test_status_command_reports_api_errors(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "call_api", lambda *_a, **_k: (404, {"error": "Record not found"}))
+    assert cli.main(["status", "99", "active"]) == 1
+    assert "HTTP 404: Record not found" in capsys.readouterr().err
+    monkeypatch.setattr(cli, "call_api", lambda *_a, **_k: (401, {"error": "Unauthorized"}))
+    assert cli.main(["status", "1", "active"]) == 1
+    assert "HTTP 401" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as result:
+        cli.main(["status", "1", "paused"])
+    assert result.value.code == 2
+
+
 def test_module_entrypoint_shows_help(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cli.py", "--help"])
     with pytest.raises(SystemExit) as result:

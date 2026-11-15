@@ -221,3 +221,22 @@ def test_delete_record_cli_found_missing_and_failure(monkeypatch, capsys):
     with pytest.raises(RuntimeError):
         db.delete_record_cli("database-url", 7, "req-cli-error")
     assert json.loads(capsys.readouterr().out)["level"] == "ERROR"
+
+
+def test_update_status_cli_found_missing_and_failure(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (7, "Git", "Worktree", "Estudo", "2026-11-15", 30, "inactive")
+    assert db.update_status_cli("database-url", 7, "inactive", "req-cli-status")[6] == "inactive"
+    assert cursor.execute.call_args.args[1] == ("inactive", 7)
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["operation"] == "update_status"
+    assert event["layer"] == "db" and event["request_id"] == "req-cli-status"
+
+    cursor.fetchone.return_value = None
+    assert db.update_status_cli("database-url", 8, "active", "req-cli-missing") is None
+    assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.update_status_cli("database-url", 7, "active", "req-cli-error")
+    assert json.loads(capsys.readouterr().out)["level"] == "ERROR"

@@ -252,3 +252,23 @@ def delete_record_cli(database_url, record_id, request_id):
     except Exception:
         log_event("ERROR", "cli", "delete", "error", request_id, "Record deletion failed")
         raise
+
+
+def update_status_cli(database_url, record_id, status, request_id):
+    """Set a record's status requested through the CLI endpoint."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE records SET status = %s WHERE id = %s RETURNING " + RECORD_COLUMNS,
+                    (status, record_id),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            log_event("WARN", "cli", "update_status", "error", request_id, "Record not found")
+        else:
+            log_event("INFO", "cli", "update_status", "success", request_id, "Record status updated")
+        return row
+    except Exception:
+        log_event("ERROR", "cli", "update_status", "error", request_id, "Record status update failed")
+        raise

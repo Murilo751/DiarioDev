@@ -216,6 +216,23 @@ curl -b cookies.txt -X PATCH -H 'Content-Type: application/json' -d '{"status":"
 
 Logs: a API registra `status` e `db.py` registra `update_status`, com o mesmo `request_id`.
 
+## Status do registro pela CLI (issue #14)
+
+Com um token válido em `$env:DIARIODEV_TOKEN` (veja "Rodar a CLI"), ative ou desative um registro informando o identificador mostrado em `list` e o novo status (`active` ou `inactive`):
+
+```powershell
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py status 3 inactive
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py status 3 active
+```
+
+A CLI responde `Registro #3: inativo.` ou `Registro #3: ativo.`. Um ID inexistente retorna `HTTP 404: Record not found`; sem token válido, `HTTP 401`; um status diferente de `active` e `inactive` é recusado pela própria CLI (ou com `400` pela API). No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"`. O status fica salvo em `records.status`, a mesma coluna da Web: ao recarregar a página e abrir o registro em **Editar**, ele aparece como **Ativo** ou **Inativo**.
+
+| Método e rota | Acesso | Resultado |
+|---|---|---|
+| `PATCH /api/cli/records/{id}/status` | Bearer token | Recebe `{"status":"active"\|"inactive"}`; retorna o registro (`200`), `400` / `401` / `404` |
+
+A CLI chama apenas esse endpoint REST, que usa a consulta própria `update_status_cli` de `db.py` (separada da consulta Web). Os logs saem com `client: "cli"`, operação `status` na camada `api` e `update_status` na camada `db`, com a mesma `request_id`: consulte com `docker compose logs -f api`.
+
 ## Banco e logs
 
 PostgreSQL mantém os dados no volume `postgres_data`. A tabela `users` guarda o usuário inicial e seu hash. A tabela `records` guarda título, assunto, resumo, data de estudo e minutos estudados.
