@@ -140,3 +140,44 @@ def test_update_status_found_missing_and_failure(monkeypatch, capsys):
     with pytest.raises(RuntimeError):
         db.update_status("database-url", 7, "active", "req-12")
     assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+
+def test_cli_insert_uses_records_table_and_logs_result(monkeypatch, capsys):
+    connect, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (17, "Git", "Worktree", "Estudo", "2026-11-15", 30, "active")
+    assert db.create_record_cli("database-url", RECORD, "req-cli-create")[0] == 17
+    connect.assert_called_once_with("database-url")
+    sql, values = cursor.execute.call_args.args
+    assert "INSERT INTO records" in sql and "RETURNING" in sql
+    assert values == ("Git", "Worktree", "Estudo", "2026-11-15", 30)
+    event = json.loads(capsys.readouterr().out)
+    assert (event["client"], event["operation"], event["status"], event["request_id"]) == (
+        "cli", "insert", "success", "req-cli-create",
+    )
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.create_record_cli("database-url", RECORD, "req-cli-create-failed")
+    assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+
+def test_cli_update_found_missing_and_failure(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (17, "Git", "Worktree", "Estudo", "2026-11-15", 30, "active")
+    assert db.update_record_cli("database-url", 17, RECORD, "req-cli-edit")[0] == 17
+    sql, values = cursor.execute.call_args.args
+    assert "UPDATE records SET" in sql and "RETURNING" in sql and values[-1] == 17
+    event = json.loads(capsys.readouterr().out)
+    assert (event["client"], event["operation"], event["status"], event["request_id"]) == (
+        "cli", "update", "success", "req-cli-edit",
+    )
+
+    cursor.fetchone.return_value = None
+    assert db.update_record_cli("database-url", 999, RECORD, "req-cli-missing") is None
+    event = json.loads(capsys.readouterr().out)
+    assert event["level"] == "WARN" and event["status"] == "error"
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.update_record_cli("database-url", 17, RECORD, "req-cli-edit-failed")
+    assert json.loads(capsys.readouterr().out)["status"] == "error"

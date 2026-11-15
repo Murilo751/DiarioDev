@@ -1,37 +1,57 @@
 # DiarioDev
 
-Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão na Web; a #7 adiciona a CLI com autenticação por token.
+Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão na Web; a #7 adiciona autenticação por token na CLI; a #8 permite criar e editar registros pela CLI.
 
-## Configurar, iniciar e entrar (issue #1)
+## Rodar o sistema pela primeira vez
 
-É preciso ter apenas Docker com Docker Compose, navegador e terminal. Execute todos os comandos na raiz deste worktree ou clone. **Se ainda não existir `.env`**, copie o modelo no PowerShell com `Copy-Item .env.example .env`; em Bash, use `cp .env.example .env`. O `.env` é local e ignorado pelo Git.
+Você precisa de Docker com Docker Compose (no Windows, Docker Desktop) e um navegador. Inicie o Docker e execute os comandos abaixo **na pasta do projeto**, onde está `compose.yaml`. Confira se o Docker está pronto com `docker info`.
 
-1. Defina `INITIAL_USERNAME` no `.env` (o exemplo usa `admin`). Construa a imagem da API antes de usar os comandos de configuração: `docker compose build api`.
-2. Gere o hash da senha inicial no contêiner. Digite uma senha escolhida por você quando solicitado e guarde-a para o login. Copie o hash exibido para `INITIAL_PASSWORD_HASH` em `.env`, entre **aspas simples** (por exemplo, `INITIAL_PASSWORD_HASH='scrypt:...'`). As aspas evitam que o Compose interprete os caracteres `$` do hash. Não coloque a senha em texto puro nesse arquivo:
+1. Crie o arquivo local de configuração. No PowerShell:
+
+   ```powershell
+   if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+   ```
+
+   No Bash, use `test -f .env || cp .env.example .env`. Se `.env` já existe, mantenha-o: ele pode conter a senha do banco usada por um volume PostgreSQL anterior.
+
+2. Construa a imagem da API, necessária para gerar o hash e os segredos:
+
+   ```sh
+   docker compose build api
+   ```
+
+3. Escolha a senha do usuário inicial. O comando pede a senha sem exibi-la e imprime somente o hash:
 
    ```sh
    docker compose run --rm --no-deps api python -c "from werkzeug.security import generate_password_hash; import getpass; print(generate_password_hash(getpass.getpass('Senha inicial: ')))"
    ```
 
-3. Gere dois segredos diferentes e copie os resultados para `SESSION_SECRET` e `POSTGRES_PASSWORD` em `.env`:
+   Abra `.env`, mantenha `INITIAL_USERNAME=admin` (ou escolha outro nome) e cole o hash em `INITIAL_PASSWORD_HASH` **entre aspas simples**. Exemplo: `INITIAL_PASSWORD_HASH='scrypt:...'`. As aspas impedem que o Compose interprete os caracteres `$` do hash. Guarde a senha digitada: é ela que você usará para entrar, não o hash.
+
+4. Gere um segredo para `SESSION_SECRET` e outro, **diferente**, para `POSTGRES_PASSWORD`. Execute o mesmo comando duas vezes e cole cada resultado na linha correspondente do `.env`:
 
    ```sh
    docker compose run --rm --no-deps api python -c "import secrets; print(secrets.token_hex(32))"
    ```
 
-   Execute o comando duas vezes. Os quatro campos de `.env` devem ter valores não vazios. Não publique `.env`, a senha digitada ou os segredos.
+   Confira que os quatro campos de `.env` têm valores. Não coloque a senha inicial em texto puro no arquivo nem publique `.env`; ele é ignorado pelo Git.
 
-4. Inicie Web, API e banco:
+5. Inicie a página Web, a API, o banco e o contêiner da CLI com um único comando:
 
    ```sh
    docker compose up --build -d
+   docker compose ps
    ```
 
-5. Confira `docker compose ps`: `web`, `api` e `db` devem aparecer em execução, com API e banco saudáveis. Abra [http://localhost:8080](http://localhost:8080) e entre com `INITIAL_USERNAME` e **a senha digitada no passo 2**, não com o hash. A página mantém a sessão ao recarregar e oferece o botão **Sair**.
+   `web`, `api`, `db` e `cli` devem estar em execução; `api` e `db` devem aparecer como `healthy`. Abra [http://localhost:8080](http://localhost:8080) e entre com `INITIAL_USERNAME` e a senha escolhida no passo 3. Para conferir a API, execute `docker compose exec web wget -qO- http://localhost/api/web/health`; o resultado esperado é `{"status":"ok"}`.
 
-O usuário inicial é criado ou atualizado a cada inicialização da API. No banco, a senha é armazenada somente como hash. Alterar `INITIAL_USERNAME` ou `INITIAL_PASSWORD_HASH` em `.env` e reiniciar a API atualiza esse usuário.
+Nas próximas vezes, use `docker compose up -d` para iniciar e `docker compose down` para parar. `down` preserva os registros no volume PostgreSQL. O usuário inicial é criado ou atualizado a cada inicialização da API; se você alterar `INITIAL_USERNAME` ou `INITIAL_PASSWORD_HASH`, execute `docker compose up -d` novamente.
 
-Se o banco informar `Database is uninitialized and superuser password is not specified`, preencha `POSTGRES_PASSWORD` em `.env` e execute `docker compose up --build -d` novamente. Para diagnosticar outros problemas, use `docker compose logs --tail 50 db api`.
+### Se não iniciar
+
+- Se `docker info` falhar, abra o Docker Desktop e aguarde o mecanismo de contêineres iniciar.
+- Se a API apresentar `password authentication failed for user "diariodev"`, o volume do banco já existia com outra senha. Reutilize o `POSTGRES_PASSWORD` antigo no `.env` se souber qual é. Se não souber, mantenha o banco em execução, entre com `docker compose exec db psql -U diariodev -d diariodev`, digite `\password diariodev`, informe duas vezes o valor atual de `POSTGRES_PASSWORD` do `.env` e saia com `\q`. Depois execute `docker compose up -d`. Isso preserva os registros.
+- Para ver o erro de inicialização, execute `docker compose logs --tail 50 db api`.
 
 ## API Web
 
@@ -86,37 +106,39 @@ Selecione um registro pela primeira coluna e clique em **Excluir selecionado**. 
 
 `GET /api/web/records` aceita `page` (inteiro a partir de 1), `sort` (`study_date`, `title`, `topic` ou `minutes`) e `direction` (`asc` ou `desc`). Os padrões são `page=1`, `sort=study_date` e `direction=desc`. A resposta contém `items`, `page`, `page_size`, `total` e `total_pages`; parâmetros inválidos retornam `400`. O registro inexistente retorna `404` na exclusão. Listagem e exclusão exigem login e geram logs JSON correlacionados nas camadas API e banco.
 
-## CLI e autenticação (issue #7)
+## Rodar a CLI
 
-A CLI roda no contêiner `cli` e chama somente a API REST. O serviço inicia a API e o banco quando necessário. Para ver a ajuda e testar o healthcheck público:
+O `docker compose up -d` inicia o contêiner `cli` junto com Web, API e banco. Ele fica pronto para receber comandos; você não precisa executar `docker compose run` antes. Na pasta do projeto:
 
-```sh
-docker compose run --rm cli --help
-docker compose run --rm cli health
-```
+1. Confira os comandos disponíveis e a conexão com a API:
 
-Obtenha um token com o usuário inicial configurado em `.env`. O comando pede a senha sem mostrá-la no terminal:
+   ```sh
+   docker compose exec cli python cli.py --help
+   docker compose exec cli python cli.py health
+   ```
 
-```sh
-docker compose run --rm cli token --username admin
-```
+   O segundo comando deve responder `API da CLI saudável.`.
 
-Substitua `admin` se configurou outro `INITIAL_USERNAME`. No prompt `Senha:`, digite a mesma senha usada para gerar o hash do usuário inicial. Uma senha incorreta retorna `HTTP 401: Invalid credentials`; uma senha correta imprime o token. Para usá-lo no PowerShell, cole **o token real** quando solicitado:
+2. Gere um token com o usuário inicial:
 
-```powershell
-$env:DIARIODEV_TOKEN = (Read-Host 'Cole o token exibido pela CLI').Trim()
-docker compose run --rm cli me
-```
+   ```sh
+   docker compose exec cli python cli.py token --username admin
+   ```
 
-O resultado esperado é `Usuário: admin` (ou o nome configurado). Copie o token completo, sem espaços ou barras `\` acrescentadas pela formatação de mensagens. Em Bash, use `export DIARIODEV_TOKEN='TOKEN_REAL'` antes de `docker compose run --rm cli me`. O comando `me` usa `Authorization: Bearer <token>`. Sem token ou com token inválido, a API responde `401`; para conferir:
+   Troque `admin` se você mudou `INITIAL_USERNAME` no `.env`. Quando aparecer `Senha:`, digite **a senha escolhida ao gerar o hash**, não o hash. A CLI mostrará um token; copie-o inteiro.
 
-```sh
-docker compose run --rm cli --token invalido me
-```
+3. No PowerShell, guarde o token só nesta sessão do terminal e confirme o login:
 
-O resultado esperado nesse teste é `HTTP 401: Unauthorized` e código de saída 1. O token vence após uma hora; execute `token` novamente para renová-lo. Não publique o token nem o arquivo `.env`. Nesta issue, a CLI oferece apenas `health`, `token` e `me`; comandos para registros pertencem às próximas issues.
+   ```powershell
+   $env:DIARIODEV_TOKEN = (Read-Host 'Cole o token exibido pela CLI').Trim()
+   docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py me
+   ```
 
-Para automações que já fornecem a senha pela entrada padrão, `token --username admin --password-stdin` lê uma linha sem colocar a senha nos argumentos do processo. O modo interativo acima continua sendo o recomendado para uso manual.
+   O resultado esperado é `Usuário: admin` (ou o nome configurado). No Bash, use `export DIARIODEV_TOKEN='TOKEN_REAL'` e depois `docker compose exec -e DIARIODEV_TOKEN="$DIARIODEV_TOKEN" cli python cli.py me`.
+
+O token vence após uma hora; execute o passo 2 novamente para renová-lo. Não publique o token. A CLI oferece `health`, `token`, `me`, `create` e `edit`. Uma senha incorreta retorna `HTTP 401: Invalid credentials`; um token ausente ou inválido retorna `HTTP 401: Unauthorized`.
+
+Para automações, `docker compose exec -T cli python cli.py token --username admin --password-stdin` lê a senha pela entrada padrão sem mostrá-la nos argumentos do processo.
 
 | Método e rota | Acesso | Resultado |
 |---|---|---|
@@ -124,7 +146,31 @@ Para automações que já fornecem a senha pela entrada padrão, `token --userna
 | `POST /api/cli/token` | Público | Recebe usuário e senha em JSON; retorna `token`, `token_type` e `expires_in`, ou `401` |
 | `GET /api/cli/me` | Bearer token | Retorna o usuário autenticado ou `401` |
 
-Os endpoints CLI são separados dos endpoints Web. O token é assinado com `SESSION_SECRET` e não é registrado nos logs. A autenticação por token pode ser reutilizada pelos comandos de registros das próximas issues.
+Os endpoints CLI são separados dos endpoints Web. O token é assinado com `SESSION_SECRET` e não é registrado nos logs. Os comandos `create` e `edit` usam essa autenticação.
+
+
+## Criar e editar registros pela CLI (issue #8)
+
+Com um token válido em `$env:DIARIODEV_TOKEN` no PowerShell (veja a seção anterior), use `create` com os mesmos cinco campos do formulário Web. O comando mostra o ID gerado:
+
+```powershell
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py create --title "Git" --topic "Worktree" --summary "Estudei branches isoladas" --study-date 2026-11-15 --minutes 30
+```
+
+Use o ID retornado para editar o registro. `edit` recebe o registro inteiro, portanto informe novamente os cinco campos, inclusive os que não mudaram:
+
+```powershell
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py edit 1 --title "Git" --topic "Worktree" --summary "Pratiquei git worktree" --study-date 2026-11-15 --minutes 45
+```
+
+No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"` no lugar de `-e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN`. Para ver as opções, execute `docker compose exec cli python cli.py create --help` ou `docker compose exec cli python cli.py edit --help`. `title`, `topic` e `summary` não podem ficar vazios e têm limites de 120, 60 e 1000 caracteres; `study_date` deve ser uma data válida `AAAA-MM-DD`; `minutes` deve ser um inteiro entre 0 e 1440. A API aplica a **mesma validação da Web**, remove espaços nas pontas dos textos e devolve `400` com erros por campo. A CLI exibe esses erros no terminal e sai com código 1. ID inexistente retorna `404`; sem token válido, `401`.
+
+| Método e rota | Acesso | Resultado |
+|---|---|---|
+| `POST /api/cli/records` | Bearer token | Cria no PostgreSQL e retorna o registro com ID (`201`) |
+| `PUT /api/cli/records/{id}` | Bearer token | Atualiza o mesmo registro e retorna seus dados (`200`); ID inexistente retorna `404` |
+
+A CLI chama apenas esses endpoints REST. A API usa `db.py` para gravar na mesma tabela `records` utilizada pela Web. Os registros criados ou editados pela CLI aparecem na listagem Web ao abrir ou atualizar a página. Para conferir os logs correlacionados de API e banco, execute `docker compose logs -f api`: eventos `create`/`update` na camada `api` e `insert`/`update` na camada `db` compartilham `request_id` e usam `client: "cli"`.
 
 
 ## Status do registro na Web (issue #13)
@@ -155,23 +201,10 @@ Os testes unitários rodam em contêiner e exigem 100% de cobertura de linhas em
 docker compose run --rm --no-deps --build tests
 ```
 
-Nesta versão, o resultado esperado é **25 testes aprovados e 100% de cobertura**. Para consultar os logs JSON da API e do acesso ao banco, use `docker compose logs -f api`; pressione `Ctrl+C` para parar de acompanhar os logs.
+A suíte deve passar com **100% de cobertura**. Para consultar os logs JSON da API e do acesso ao banco, use `docker compose logs -f api`; pressione `Ctrl+C` para parar de acompanhar os logs.
 
 Para encerrar os serviços sem apagar os dados do volume PostgreSQL:
 
 ```sh
 docker compose down
 ```
-
-## Commit, push e PR da issue #7
-
-Cada pessoa faz seu commit, push e PR a partir do próprio fork e worktree. Na branch `feat/issue-7-cli-auth`, confira `git status` e prepare apenas os arquivos desta issue; `.env` e `cookies.txt` são ignorados pelo Git:
-
-```sh
-git add .gitignore Dockerfile README.md api.py cli.py compose.yaml db.py requirements.txt tests/test_api.py tests/test_cli.py tests/test_db.py
-git diff --cached --check
-git commit -m "feat: adiciona estrutura e autenticação da CLI"
-git push -u origin feat/issue-7-cli-auth
-```
-
-No GitHub, abra uma PR com base em `VideoDownloaderPos/DiarioDev:main` e origem `Murilo751/DiarioDev:feat/issue-7-cli-auth`. Preencha `.github/PULL_REQUEST_TEMPLATE.md`, inclua `Closes #7`, descreva as rotas CLI e os logs, e justifique os arquivos auxiliares (`.gitignore`, `Dockerfile`, `compose.yaml`, `requirements.txt` e testes). Informe o comando de testes e a cobertura obtida. Peça a aprovação de todos os colegas antes do merge; a integração no repositório principal deve usar **Rebase and merge**. Após o merge da PR principal, a equipe cria a tag SemVer e a release no commit resultante do `main`.

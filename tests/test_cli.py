@@ -86,6 +86,45 @@ def test_main_reports_unauthorized_and_connection_failure(monkeypatch, capsys):
     assert "conectar" in capsys.readouterr().err
 
 
+def test_create_and_edit_send_records_only_to_api(monkeypatch, capsys):
+    calls = []
+
+    def request_api(*args, **kwargs):
+        calls.append((args, kwargs))
+        return (201 if args[2] == "POST" else 200), {"id": 17}
+
+    monkeypatch.setattr(cli, "call_api", request_api)
+    monkeypatch.setenv("DIARIODEV_TOKEN", "env-token")
+    fields = ["--title", "Git", "--topic", "Worktree", "--summary", "Estudo",
+              "--study-date", "2026-11-15", "--minutes", "30"]
+    assert cli.main(["create", *fields]) == 0
+    assert cli.main(["edit", "17", *fields]) == 0
+    payload = {"title": "Git", "topic": "Worktree", "summary": "Estudo",
+               "study_date": "2026-11-15", "minutes": 30}
+    assert calls == [
+        (("http://api:8000", "/api/cli/records", "POST", payload, "env-token"), {}),
+        (("http://api:8000", "/api/cli/records/17", "PUT", payload, "env-token"), {}),
+    ]
+    assert capsys.readouterr().out.splitlines() == [
+        "Registro #17 criado.", "Registro #17 atualizado.",
+    ]
+
+
+def test_record_commands_report_api_validation_and_auth_errors(monkeypatch, capsys):
+    fields = ["--title", "Git", "--topic", "Worktree", "--summary", "Estudo",
+              "--study-date", "2026-11-15", "--minutes", "30"]
+    monkeypatch.setattr(cli, "call_api", lambda *_args, **_kwargs: (400, {
+        "errors": {"study_date": "Informe uma data válida", "minutes": "Valor inválido"},
+    }))
+    assert cli.main(["create", *fields]) == 1
+    assert capsys.readouterr().err.splitlines() == [
+        "study_date: Informe uma data válida", "minutes: Valor inválido",
+    ]
+    monkeypatch.setattr(cli, "call_api", lambda *_args, **_kwargs: (401, {"error": "Unauthorized"}))
+    assert cli.main(["edit", "17", *fields]) == 1
+    assert "HTTP 401: Unauthorized" in capsys.readouterr().err
+
+
 def test_module_entrypoint_shows_help(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cli.py", "--help"])
     with pytest.raises(SystemExit) as result:

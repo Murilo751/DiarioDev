@@ -27,12 +27,9 @@ services:
 
   cli:
     build: .
-    profiles: ["tools"]
-    entrypoint: ["python", "cli.py"]
-    command: []
+    command: ["sleep", "infinity"]
     environment:
       DIARIODEV_API_URL: http://api:8000
-      DIARIODEV_TOKEN: ${DIARIODEV_TOKEN:-}
     depends_on:
       api:
         condition: service_healthy

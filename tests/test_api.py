@@ -280,3 +280,70 @@ def test_change_status_errors(monkeypatch, settings):
 
     monkeypatch.setattr(api.db, "update_status", fail)
     assert client.patch("/api/web/records/1/status", json={"status": "active"}).status_code == 503
+
+
+def cli_record_client(monkeypatch, settings):
+    monkeypatch.setattr(api.db, "get_user", lambda *_: (1, "student", settings["INITIAL_PASSWORD_HASH"]))
+    client = api.create_app(settings, initialize=False).test_client()
+    token = client.post("/api/cli/token", json={
+        "username": "student", "password": "correct-password",
+    }).json["token"]
+    return client, {"Authorization": f"Bearer {token}"}
+
+
+def test_cli_record_routes_require_valid_token(settings):
+    client = api.create_app(settings, initialize=False).test_client()
+    for path, method in (("/api/cli/records", client.post),
+                         ("/api/cli/records/1", client.put)):
+        assert method(path, json=VALID).status_code == 401
+        assert method(path, json=VALID, headers={"Authorization": "Bearer invalid"}).status_code == 401
+
+
+def test_cli_create_and_edit_share_web_validation_and_persist(monkeypatch, settings, capsys):
+    client, headers = cli_record_client(monkeypatch, settings)
+    calls = []
+
+    def create(url, record, request_id):
+        calls.append(("create", record, request_id))
+        return ROW
+
+    def update(url, record_id, record, request_id):
+        calls.append(("update", record_id, record, request_id))
+        return (record_id, record["title"], record["topic"], record["summary"],
+                record["study_date"], record["minutes"], "active")
+
+    monkeypatch.setattr(api.db, "create_record_cli", create)
+    monkeypatch.setattr(api.db, "update_record_cli", update)
+    capsys.readouterr()
+    created = client.post("/api/cli/records", json={**VALID, "title": "  Git  "}, headers=headers)
+    assert created.status_code == 201 and created.json["id"] == 1
+    assert calls[0][1]["title"] == "Git"
+    edited = client.put("/api/cli/records/1", json={**VALID, "topic": "API"}, headers=headers)
+    assert edited.status_code == 200 and edited.json["topic"] == "API"
+    assert calls[1][1] == 1
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [event["operation"] for event in events] == ["create", "update"]
+    assert all(event["client"] == "cli" and event["status"] == "success" for event in events)
+    assert events[0]["request_id"] == calls[0][2]
+    assert events[1]["request_id"] == calls[1][3]
+
+
+def test_cli_record_validation_missing_and_database_failures(monkeypatch, settings):
+    client, headers = cli_record_client(monkeypatch, settings)
+    invalid = {**VALID, "title": " ", "study_date": "tomorrow", "minutes": 1441}
+    create_error = client.post("/api/cli/records", json=invalid, headers=headers)
+    edit_error = client.put("/api/cli/records/1", json=invalid, headers=headers)
+    assert create_error.status_code == edit_error.status_code == 400
+    assert create_error.json["errors"] == edit_error.json["errors"]
+    assert set(create_error.json["errors"]) == {"title", "study_date", "minutes"}
+
+    monkeypatch.setattr(api.db, "update_record_cli", lambda *_: None)
+    assert client.put("/api/cli/records/999", json=VALID, headers=headers).status_code == 404
+
+    def fail(*_):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(api.db, "update_record_cli", fail)
+    monkeypatch.setattr(api.db, "create_record_cli", fail)
+    assert client.put("/api/cli/records/1", json=VALID, headers=headers).status_code == 503
+    assert client.post("/api/cli/records", json=VALID, headers=headers).status_code == 503
