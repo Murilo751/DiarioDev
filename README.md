@@ -1,6 +1,6 @@
 # DiarioDev
 
-Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial, o login Web e a estrutura da API e do banco. Cadastro e consulta dos registros serão adicionados nas próximas issues.
+Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial, o login Web e a estrutura da API e do banco. A issue #2 adiciona o cadastro e a edição de registros; a listagem virá nas próximas issues.
 
 ## Iniciar e entrar (issue #1)
 
@@ -39,6 +39,8 @@ O usuário inicial é criado ou atualizado a cada inicialização da API. No ban
 | `POST /api/web/login` | Público | Recebe JSON `{"username":"...","password":"..."}`; cria a sessão ou retorna `401` |
 | `GET /api/web/me` | Sessão | Retorna o usuário autenticado ou `401` |
 | `POST /api/web/logout` | Sessão | Encerra a sessão ou retorna `401` |
+| `POST /api/web/records` | Sessão | Cria um registro (`201`), ou retorna `400` com `errors` por campo / `401` |
+| `PUT /api/web/records/{id}` | Sessão | Edita um registro (`200`), ou retorna `400` / `401` / `404` |
 
 O cookie da sessão é `HttpOnly` e `SameSite=Lax`. A página acessa a API pela mesma origem usando o proxy do Nginx. Rotas funcionais adicionadas nas próximas issues também deverão exigir sessão válida.
 
@@ -47,6 +49,29 @@ Para verificar o healthcheck pelo contêiner Web:
 ```sh
 docker compose exec web wget -qO- http://localhost/api/web/health
 ```
+
+## Cadastro e edição de registros (issue #2)
+
+Depois do login, a página exibe o formulário **Novo registro** com cinco campos, todos obrigatórios:
+
+| Campo | Regra |
+|---|---|
+| `title` (Título) | Texto, até 120 caracteres |
+| `topic` (Assunto) | Texto, até 60 caracteres |
+| `summary` (Resumo) | Texto, até 1000 caracteres |
+| `study_date` (Data do estudo) | Data válida `AAAA-MM-DD` |
+| `minutes` (Minutos estudados) | Inteiro de 0 a 1440 |
+
+Campos inválidos recebem uma mensagem de erro abaixo do próprio campo. A validação ocorre no navegador e novamente na API (`400` com `{"errors": {"campo": "mensagem"}}`). Ao salvar, `POST /api/web/records` grava o registro no PostgreSQL e o formulário passa para o modo **Editar registro #id**: **Salvar alterações** usa `PUT /api/web/records/{id}`. **Novo registro** limpa o formulário. Os dados persistem no volume `postgres_data`.
+
+Exemplo pelo terminal (com a sessão de login em `cookies.txt`):
+
+```sh
+curl -c cookies.txt -H 'Content-Type: application/json' -d '{"username":"admin","password":"SUA_SENHA"}' http://localhost:8080/api/web/login
+curl -b cookies.txt -H 'Content-Type: application/json' -d '{"title":"Git","topic":"Worktree","summary":"Estudo","study_date":"2026-11-15","minutes":30}' http://localhost:8080/api/web/records
+```
+
+Logs: a API registra `create` e `update` (sucesso, validação, não encontrado e falha) e `db.py` registra `insert` e `update`, com o mesmo `request_id`.
 
 ## Banco e logs
 

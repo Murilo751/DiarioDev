@@ -27,6 +27,12 @@
     .secondary { background: #35465b; color: #fff; }
     .secondary:hover { background: #52637a; }
     .message { min-height: 1.5em; margin: 14px 0 0; color: #ffa6a6; }
+    textarea { width: 100%; padding: 13px 15px; color: #fff; background: #101827; border: 1px solid #52637a; border-radius: 9px; font: inherit; resize: vertical; }
+    textarea:focus { outline: 2px solid #74d7c0; outline-offset: 2px; }
+    .invalid { border-color: #ffa6a6; }
+    .field-error { margin: 6px 0 0; color: #ffa6a6; font-size: .85rem; min-height: 0; }
+    .success { color: #74d7c0; }
+    #record-form label { margin-top: 16px; }
     .hidden { display: none; }
     .note { margin-top: 48px; color: #8fa1b8; font-size: .9rem; }
     @media (max-width: 720px) { main { margin-top: 3vh; grid-template-columns: 1fr; gap: 28px; } .card { padding: 24px; } }
@@ -56,7 +62,28 @@
       </div>
       <div id="home-view" class="hidden">
         <h2>Boas-vindas, <span id="display-name"></span>!</h2>
-        <p>Seu diário está pronto. Em breve, você poderá adicionar e acompanhar seus registros de estudo aqui.</p>
+        <p>Registre o que você estudou. Preencha todos os campos para salvar.</p>
+        <h2 id="record-title">Novo registro</h2>
+        <form id="record-form" novalidate>
+          <label for="title">Título</label>
+          <input id="title" name="title" maxlength="120">
+          <p class="field-error" id="error-title"></p>
+          <label for="topic">Assunto</label>
+          <input id="topic" name="topic" maxlength="60">
+          <p class="field-error" id="error-topic"></p>
+          <label for="summary">Resumo</label>
+          <textarea id="summary" name="summary" rows="3" maxlength="1000"></textarea>
+          <p class="field-error" id="error-summary"></p>
+          <label for="study_date">Data do estudo</label>
+          <input id="study_date" name="study_date" type="date">
+          <p class="field-error" id="error-study_date"></p>
+          <label for="minutes">Minutos estudados</label>
+          <input id="minutes" name="minutes" type="number" min="0" max="1440" step="1">
+          <p class="field-error" id="error-minutes"></p>
+          <button id="record-button" type="submit">Salvar registro</button>
+          <button id="record-reset" class="secondary" type="button">Novo registro</button>
+        </form>
+        <p id="record-message" class="message" role="alert"></p>
         <button id="logout-button" class="secondary" type="button">Sair</button>
         <p id="home-message" class="message" role="alert"></p>
       </div>
@@ -124,6 +151,80 @@
         else homeMessage.textContent = 'Não foi possível sair. Tente novamente.';
       } catch (_) {
         homeMessage.textContent = 'Não foi possível conectar à API.';
+      }
+    });
+
+    const recordForm = document.getElementById('record-form');
+    const recordMessage = document.getElementById('record-message');
+    const recordFields = ['title', 'topic', 'summary', 'study_date', 'minutes'];
+    let editingId = null;
+
+    function showErrors(errors) {
+      recordFields.forEach((field) => {
+        document.getElementById('error-' + field).textContent = errors[field] || '';
+        document.getElementById(field).classList.toggle('invalid', Boolean(errors[field]));
+      });
+    }
+
+    function validateLocally(data) {
+      const errors = {};
+      ['title', 'topic', 'summary'].forEach((field) => {
+        if (!data[field].trim()) errors[field] = 'Campo obrigatório';
+      });
+      if (!data.study_date) errors.study_date = 'Informe uma data válida (AAAA-MM-DD)';
+      if (data.minutes === '' || !Number.isInteger(Number(data.minutes)) || Number(data.minutes) < 0 || Number(data.minutes) > 1440) {
+        errors.minutes = 'Informe um número inteiro de 0 a 1440';
+      }
+      return errors;
+    }
+
+    function startEdit(record) {
+      editingId = record ? record.id : null;
+      recordFields.forEach((field) => { document.getElementById(field).value = record ? record[field] : ''; });
+      document.getElementById('record-title').textContent = record ? 'Editar registro #' + record.id : 'Novo registro';
+      document.getElementById('record-button').textContent = record ? 'Salvar alterações' : 'Salvar registro';
+      showErrors({});
+    }
+
+    document.getElementById('record-reset').addEventListener('click', () => {
+      recordMessage.textContent = '';
+      startEdit(null);
+    });
+
+    recordForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      recordMessage.textContent = '';
+      recordMessage.classList.remove('success');
+      const data = {};
+      recordFields.forEach((field) => { data[field] = document.getElementById(field).value; });
+      const localErrors = validateLocally(data);
+      showErrors(localErrors);
+      if (Object.keys(localErrors).length) return;
+      const button = document.getElementById('record-button');
+      button.disabled = true;
+      try {
+        const response = await fetch(editingId ? '/api/web/records/' + editingId : '/api/web/records', {
+          method: editingId ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...data, minutes: Number(data.minutes) })
+        });
+        if (response.status === 400) {
+          showErrors((await response.json()).errors || {});
+          return;
+        }
+        if (response.status === 401) { showLogin(); return; }
+        if (!response.ok) {
+          recordMessage.textContent = response.status === 404 ? 'Registro não encontrado.' : 'Não foi possível salvar. Tente novamente.';
+          return;
+        }
+        const wasEditing = editingId !== null;
+        startEdit(await response.json());
+        recordMessage.classList.add('success');
+        recordMessage.textContent = wasEditing ? 'Registro atualizado.' : 'Registro criado. Você pode editá-lo abaixo.';
+      } catch (_) {
+        recordMessage.textContent = 'Não foi possível conectar à API.';
+      } finally {
+        button.disabled = false;
       }
     });
 

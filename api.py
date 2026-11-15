@@ -1,8 +1,8 @@
-"""Web authentication endpoints for DiarioDev."""
+"""Web authentication and record endpoints for DiarioDev."""
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from functools import wraps
 from uuid import uuid4
 
@@ -23,6 +23,45 @@ def log_event(level, operation, status, request_id, message):
         "request_id": request_id,
         "message": message,
     }), flush=True)
+
+
+TEXT_LIMITS = {"title": 120, "topic": 60, "summary": 1000}
+
+
+def validate_record(body):
+    """Return (clean record, errors) for the five required diary fields."""
+    if not isinstance(body, dict):
+        body = {}
+    record, errors = {}, {}
+    for field, limit in TEXT_LIMITS.items():
+        value = body.get(field)
+        value = value.strip() if isinstance(value, str) else ""
+        if not value:
+            errors[field] = "Campo obrigatório"
+        elif len(value) > limit:
+            errors[field] = f"Máximo de {limit} caracteres"
+        else:
+            record[field] = value
+    study_date = body.get("study_date")
+    try:
+        if not isinstance(study_date, str) or not study_date:
+            raise ValueError
+        record["study_date"] = date.fromisoformat(study_date)
+    except ValueError:
+        errors["study_date"] = "Informe uma data válida (AAAA-MM-DD)"
+    minutes = body.get("minutes")
+    if isinstance(minutes, bool) or not isinstance(minutes, int) or not 0 <= minutes <= 1440:
+        errors["minutes"] = "Informe um número inteiro de 0 a 1440"
+    else:
+        record["minutes"] = minutes
+    return record, errors
+
+
+def serialize_record(row):
+    return {
+        "id": row[0], "title": row[1], "topic": row[2], "summary": row[3],
+        "study_date": row[4].isoformat(), "minutes": row[5],
+    }
 
 
 def create_app(config=None, initialize=True):
@@ -111,5 +150,38 @@ def create_app(config=None, initialize=True):
         session.clear()
         log_event("INFO", "logout", "success", g.request_id, "User signed out")
         return jsonify(status="ok")
+
+    @app.post("/api/web/records")
+    @login_required("create")
+    def create_record():
+        record, errors = validate_record(request.get_json(silent=True))
+        if errors:
+            log_event("WARN", "create", "error", g.request_id, "Invalid record")
+            return jsonify(errors=errors), 400
+        try:
+            row = db.create_record(app.config["DATABASE_URL"], record, g.request_id)
+        except Exception:
+            log_event("ERROR", "create", "error", g.request_id, "Record creation failed")
+            return jsonify(error="Record unavailable"), 503
+        log_event("INFO", "create", "success", g.request_id, "Registro criado")
+        return jsonify(serialize_record(row)), 201
+
+    @app.put("/api/web/records/<int:record_id>")
+    @login_required("update")
+    def update_record(record_id):
+        record, errors = validate_record(request.get_json(silent=True))
+        if errors:
+            log_event("WARN", "update", "error", g.request_id, "Invalid record")
+            return jsonify(errors=errors), 400
+        try:
+            row = db.update_record(app.config["DATABASE_URL"], record_id, record, g.request_id)
+        except Exception:
+            log_event("ERROR", "update", "error", g.request_id, "Record update failed")
+            return jsonify(error="Record unavailable"), 503
+        if row is None:
+            log_event("WARN", "update", "error", g.request_id, "Record not found")
+            return jsonify(error="Record not found"), 404
+        log_event("INFO", "update", "success", g.request_id, "Registro atualizado")
+        return jsonify(serialize_record(row))
 
     return app

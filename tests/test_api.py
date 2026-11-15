@@ -92,3 +92,67 @@ def test_login_session_and_logout(monkeypatch, settings, capsys):
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert events[0]["request_id"] == request_ids[0]
     assert [event["operation"] for event in events] == ["login", "me", "logout", "me"]
+
+
+import datetime
+
+VALID = {"title": "Git", "topic": "Worktree", "summary": "Estudo", "study_date": "2026-11-15", "minutes": 30}
+ROW = (1, "Git", "Worktree", "Estudo", datetime.date(2026, 11, 15), 30)
+
+
+def logged_in_client(monkeypatch, settings):
+    monkeypatch.setattr(api.db, "get_user", lambda *_: (1, "student", settings["INITIAL_PASSWORD_HASH"]))
+    client = api.create_app(settings, initialize=False).test_client()
+    client.post("/api/web/login", json={"username": "student", "password": "correct-password"})
+    return client
+
+
+def test_record_routes_require_login(settings):
+    client = api.create_app(settings, initialize=False).test_client()
+    assert client.post("/api/web/records", json=VALID).status_code == 401
+    assert client.put("/api/web/records/1", json=VALID).status_code == 401
+
+
+def test_create_record(monkeypatch, settings, capsys):
+    client = logged_in_client(monkeypatch, settings)
+    calls = []
+    monkeypatch.setattr(api.db, "create_record", lambda url, record, rid: calls.append((record, rid)) or ROW)
+    capsys.readouterr()
+    response = client.post("/api/web/records", json={**VALID, "title": "  Git  "})
+    assert response.status_code == 201
+    assert response.json == {"id": 1, "title": "Git", "topic": "Worktree", "summary": "Estudo",
+                             "study_date": "2026-11-15", "minutes": 30}
+    assert calls[0][0]["title"] == "Git" and calls[0][0]["study_date"] == datetime.date(2026, 11, 15)
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "create" and event["request_id"] == calls[0][1]
+
+
+def test_record_validation_errors(monkeypatch, settings):
+    client = logged_in_client(monkeypatch, settings)
+    response = client.post("/api/web/records", json=["invalid"])
+    assert response.status_code == 400
+    assert set(response.json["errors"]) == {"title", "topic", "summary", "study_date", "minutes"}
+    invalid = {"title": "x" * 121, "topic": 5, "summary": "  ", "study_date": "2026-13-45", "minutes": True}
+    errors = client.put("/api/web/records/1", json=invalid).json["errors"]
+    assert set(errors) == {"title", "topic", "summary", "study_date", "minutes"}
+    assert client.post("/api/web/records", json={**VALID, "minutes": -1}).status_code == 400
+    assert client.post("/api/web/records", json={**VALID, "minutes": "30"}).status_code == 400
+    assert client.post("/api/web/records", json={**VALID, "study_date": 20261115}).status_code == 400
+
+
+def test_update_record_found_missing_and_failure(monkeypatch, settings):
+    client = logged_in_client(monkeypatch, settings)
+    monkeypatch.setattr(api.db, "update_record", lambda url, rid_, record, request_id: ROW)
+    response = client.put("/api/web/records/1", json=VALID)
+    assert response.status_code == 200 and response.json["id"] == 1
+
+    monkeypatch.setattr(api.db, "update_record", lambda *_: None)
+    assert client.put("/api/web/records/99", json=VALID).status_code == 404
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "update_record", fail)
+    assert client.put("/api/web/records/1", json=VALID).status_code == 503
+    monkeypatch.setattr(api.db, "create_record", fail)
+    assert client.post("/api/web/records", json=VALID).status_code == 503
