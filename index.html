@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DiarioDev — seu diário de estudos</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #e8edf7; background: #101827; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; }
+    header { max-width: 1060px; margin: auto; padding: 28px 24px; display: flex; justify-content: space-between; align-items: center; }
+    .brand { font-weight: 800; font-size: 1.3rem; letter-spacing: -.04em; }
+    .brand span { color: #74d7c0; }
+    main { max-width: 1060px; margin: 7vh auto 0; padding: 24px; display: grid; grid-template-columns: 1.15fr .85fr; gap: 64px; align-items: center; }
+    h1 { font-size: clamp(2.7rem, 6vw, 5rem); line-height: 1.05; letter-spacing: -.06em; margin: 0 0 24px; }
+    h1 span { color: #74d7c0; }
+    p { color: #b7c3d4; line-height: 1.65; max-width: 45ch; }
+    .eyebrow { color: #74d7c0; font-size: .82rem; font-weight: 750; letter-spacing: .16em; text-transform: uppercase; }
+    .card { background: #1c283a; border: 1px solid #35465b; border-radius: 20px; padding: 32px; box-shadow: 0 24px 70px #070d1866; }
+    h2 { margin: 0 0 8px; font-size: 1.55rem; }
+    label { display: block; margin: 22px 0 8px; font-weight: 650; font-size: .9rem; }
+    input { width: 100%; padding: 13px 15px; color: #fff; background: #101827; border: 1px solid #52637a; border-radius: 9px; font: inherit; }
+    input:focus { outline: 2px solid #74d7c0; outline-offset: 2px; }
+    button { width: 100%; margin-top: 26px; padding: 14px; background: #74d7c0; color: #10232c; border: 0; border-radius: 9px; font: inherit; font-weight: 800; cursor: pointer; }
+    button:hover { background: #a0ead9; }
+    button:disabled { opacity: .65; cursor: wait; }
+    .secondary { background: #35465b; color: #fff; }
+    .secondary:hover { background: #52637a; }
+    .message { min-height: 1.5em; margin: 14px 0 0; color: #ffa6a6; }
+    .hidden { display: none; }
+    .note { margin-top: 48px; color: #8fa1b8; font-size: .9rem; }
+    @media (max-width: 720px) { main { margin-top: 3vh; grid-template-columns: 1fr; gap: 28px; } .card { padding: 24px; } }
+  </style>
+</head>
+<body>
+  <header><div class="brand">diario<span>dev</span></div><span class="eyebrow">Aprenda. Registre. Evolua.</span></header>
+  <main>
+    <section>
+      <div class="eyebrow">Seu espaço de aprendizado</div>
+      <h1>Cada dia de código <span>conta.</span></h1>
+      <p>Guarde o que você estudou, acompanhe os assuntos que mais pratica e enxergue sua evolução com o tempo.</p>
+      <p class="note">Comece entrando com o usuário configurado pela equipe.</p>
+    </section>
+    <section class="card" aria-label="Acesso">
+      <div id="login-view">
+        <h2>Entrar no DiarioDev</h2>
+        <p>Continue seu diário de estudos.</p>
+        <form id="login-form">
+          <label for="username">Usuário</label>
+          <input id="username" name="username" autocomplete="username" required>
+          <label for="password">Senha</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button id="login-button" type="submit">Entrar</button>
+        </form>
+        <p id="login-message" class="message" role="alert"></p>
+      </div>
+      <div id="home-view" class="hidden">
+        <h2>Boas-vindas, <span id="display-name"></span>!</h2>
+        <p>Seu diário está pronto. Em breve, você poderá adicionar e acompanhar seus registros de estudo aqui.</p>
+        <button id="logout-button" class="secondary" type="button">Sair</button>
+        <p id="home-message" class="message" role="alert"></p>
+      </div>
+    </section>
+  </main>
+  <script>
+    const loginView = document.getElementById('login-view');
+    const homeView = document.getElementById('home-view');
+    const loginMessage = document.getElementById('login-message');
+    const homeMessage = document.getElementById('home-message');
+    const loginButton = document.getElementById('login-button');
+
+    function showHome(username) {
+      document.getElementById('display-name').textContent = username;
+      loginView.classList.add('hidden');
+      homeView.classList.remove('hidden');
+    }
+
+    function showLogin() {
+      homeView.classList.add('hidden');
+      loginView.classList.remove('hidden');
+      document.getElementById('password').value = '';
+    }
+
+    async function inspectSession() {
+      try {
+        const response = await fetch('/api/web/me');
+        if (response.ok) showHome((await response.json()).username);
+      } catch (_) {
+        loginMessage.textContent = 'Não foi possível conectar à API.';
+      }
+    }
+
+    document.getElementById('login-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      loginMessage.textContent = '';
+      loginButton.disabled = true;
+      try {
+        const response = await fetch('/api/web/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value
+          })
+        });
+        if (!response.ok) {
+          loginMessage.textContent = response.status === 401 ? 'Usuário ou senha inválidos.' : 'Login indisponível. Tente novamente.';
+          return;
+        }
+        showHome((await response.json()).username);
+        document.getElementById('password').value = '';
+      } catch (_) {
+        loginMessage.textContent = 'Não foi possível conectar à API.';
+      } finally {
+        loginButton.disabled = false;
+      }
+    });
+
+    document.getElementById('logout-button').addEventListener('click', async () => {
+      homeMessage.textContent = '';
+      try {
+        const response = await fetch('/api/web/logout', { method: 'POST' });
+        if (response.ok || response.status === 401) showLogin();
+        else homeMessage.textContent = 'Não foi possível sair. Tente novamente.';
+      } catch (_) {
+        homeMessage.textContent = 'Não foi possível conectar à API.';
+      }
+    });
+
+    inspectSession();
+  </script>
+</body>
+</html>

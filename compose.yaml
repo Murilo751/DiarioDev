@@ -1,0 +1,43 @@
+services:
+  web:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://diariodev:${POSTGRES_PASSWORD:-}@db:5432/diariodev
+      INITIAL_USERNAME: ${INITIAL_USERNAME:-admin}
+      INITIAL_PASSWORD_HASH: ${INITIAL_PASSWORD_HASH:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: diariodev
+      POSTGRES_USER: diariodev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U diariodev -d diariodev"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  tests:
+    build: .
+    profiles: ["tools"]
+    command: ["pytest", "--cov=api", "--cov=db", "--cov-report=term-missing", "--cov-fail-under=100", "-q"]
+
+volumes:
+  postgres_data:
