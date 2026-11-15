@@ -310,3 +310,33 @@ def test_export_records_failure_is_logged(monkeypatch, capsys):
     event = json.loads(capsys.readouterr().out)
     assert event["operation"] == "export" and event["status"] == "error"
     assert event["request_id"] == "req-export-error"
+
+
+def test_search_records_cli_combines_filters_and_logs_cli_reads(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (1,)
+    cursor.fetchall.return_value = [(7, "Git", "Worktree", "Estudo", "2026-11-15", 30, "active")]
+    filters = {"author": "student", "category": "Work", "date_from": "2026-11-01", "date_to": "2026-11-30"}
+    rows, total = db.search_records_cli("database-url", filters, 2, 3, "title", "asc", "req-cli-search")
+    assert total == 1 and rows[0][0] == 7
+    count_sql, count_args = cursor.execute.call_args_list[0].args
+    list_sql, list_args = cursor.execute.call_args_list[1].args
+    assert all(fragment in count_sql for fragment in (
+        "LOWER(author) = LOWER(%s)", "STRPOS(LOWER(topic), LOWER(%s)) > 0", "study_date >= %s", "study_date <= %s"))
+    assert "ORDER BY title ASC, id DESC" in list_sql
+    assert count_args == ["student", "Work", "2026-11-01", "2026-11-30"]
+    assert list_args == ("student", "Work", "2026-11-01", "2026-11-30", 3, 3)
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["layer"] == "db"
+    assert event["operation"] == "search" and event["request_id"] == "req-cli-search"
+
+    empty = {"author": "", "category": "", "date_from": None, "date_to": None}
+    db.search_records_cli("database-url", empty, 1, 5, "minutes", "desc", "req-cli-empty")
+    assert "WHERE" not in cursor.execute.call_args.args[0]
+    assert "ORDER BY minutes DESC" in cursor.execute.call_args.args[0]
+    capsys.readouterr()
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.search_records_cli("database-url", filters, 1, 5, "title", "asc", "req-cli-error")
+    assert json.loads(capsys.readouterr().out)["status"] == "error"

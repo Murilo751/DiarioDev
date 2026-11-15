@@ -190,6 +190,40 @@ def test_status_command_reports_api_errors(monkeypatch, capsys):
     assert result.value.code == 2
 
 
+def test_search_sends_only_given_filters_to_the_cli_api(monkeypatch, capsys):
+    calls = []
+
+    def request_api(*args, **kwargs):
+        calls.append((args, kwargs))
+        return 200, {"items": [{"id": 3, "study_date": "2026-11-15", "title": "Git",
+                                "topic": "Worktree", "minutes": 30}],
+                     "page": 1, "page_size": 5, "total": 1, "total_pages": 1}
+
+    monkeypatch.setattr(cli, "call_api", request_api)
+    monkeypatch.setenv("DIARIODEV_TOKEN", "env-token")
+    assert cli.main(["search", "--author", "admin", "--category", "work",
+                     "--date-from", "2026-11-01", "--date-to", "2026-11-30",
+                     "--page", "2", "--page-size", "4", "--sort", "title", "--direction", "asc"]) == 0
+    assert cli.main(["search"]) == 0
+    assert calls[0] == (("http://api:8000", "/api/cli/records/search?page=2&page_size=4&sort=title"
+                         "&direction=asc&author=admin&category=work&date_from=2026-11-01"
+                         "&date_to=2026-11-30"), {"token": "env-token"})
+    assert calls[1][0][1] == "/api/cli/records/search?page=1&page_size=5&sort=study_date&direction=desc"
+    assert capsys.readouterr().out.splitlines() == [
+        "#3 | 2026-11-15 | Git | Worktree | 30 min", "Página 1 de 1 (1 registros)",
+        "#3 | 2026-11-15 | Git | Worktree | 30 min", "Página 1 de 1 (1 registros)",
+    ]
+
+
+def test_search_reports_invalid_parameters_and_auth_errors(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "call_api", lambda *_a, **_k: (400, {"error": "Invalid search parameters"}))
+    assert cli.main(["search", "--date-from", "ruim"]) == 1
+    assert "HTTP 400: Invalid search parameters" in capsys.readouterr().err
+    monkeypatch.setattr(cli, "call_api", lambda *_a, **_k: (401, {"error": "Unauthorized"}))
+    assert cli.main(["search"]) == 1
+    assert "HTTP 401" in capsys.readouterr().err
+
+
 def test_module_entrypoint_shows_help(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cli.py", "--help"])
     with pytest.raises(SystemExit) as result:

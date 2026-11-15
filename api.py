@@ -443,6 +443,38 @@ def create_app(config=None, initialize=True):
                        page_size=page_size, total=total,
                        total_pages=(total + page_size - 1) // page_size)
 
+    @app.get("/api/cli/records/search")
+    @cli_auth_required("search")
+    def cli_search_records():
+        filters = {key: request.args.get(key, "").strip() for key in
+                   ("author", "category", "date_from", "date_to")}
+        sort = request.args.get("sort", "study_date")
+        direction = request.args.get("direction", "desc")
+        try:
+            page = int(request.args.get("page", "1"))
+            page_size = int(request.args.get("page_size", "5"))
+            date_from = date.fromisoformat(filters["date_from"]) if filters["date_from"] else None
+            date_to = date.fromisoformat(filters["date_to"]) if filters["date_to"] else None
+        except ValueError:
+            page = page_size = 0
+            date_from = date_to = None
+        if (page < 1 or not 1 <= page_size <= 50 or sort not in db.SORT_COLUMNS
+                or direction not in ("asc", "desc")
+                or (date_from and date_to and date_from > date_to)):
+            log_event("WARN", "search", "error", g.request_id, "Invalid search parameters", "cli")
+            return jsonify(error="Invalid search parameters"), 400
+        filters["date_from"], filters["date_to"] = date_from, date_to
+        try:
+            rows, total = db.search_records_cli(app.config["DATABASE_URL"], filters, page,
+                                                page_size, sort, direction, g.request_id)
+        except Exception:
+            log_event("ERROR", "search", "error", g.request_id, "Record search failed", "cli")
+            return jsonify(error="Records unavailable"), 503
+        log_event("INFO", "search", "success", g.request_id, "Records searched", "cli")
+        return jsonify(items=[serialize_record(row) for row in rows], page=page,
+                       page_size=page_size, total=total,
+                       total_pages=(total + page_size - 1) // page_size)
+
     @app.delete("/api/cli/records/<int:record_id>")
     @cli_auth_required("delete")
     def cli_delete_record(record_id):

@@ -576,3 +576,50 @@ def test_export_database_failure_logs_both_layers(monkeypatch, settings, capsys)
     assert [event["layer"] for event in events] == ["db", "api"]
     assert all(event["operation"] == "export" and event["status"] == "error" for event in events)
     assert events[0]["request_id"] == events[1]["request_id"]
+
+
+def test_cli_search_requires_valid_token(settings):
+    client = api.create_app(settings, initialize=False).test_client()
+    assert client.get("/api/cli/records/search").status_code == 401
+    assert client.get("/api/cli/records/search", headers={"Authorization": "Bearer invalid"}).status_code == 401
+
+
+def test_cli_search_combines_filters_like_the_web(monkeypatch, settings, capsys):
+    client, headers = cli_record_client(monkeypatch, settings)
+    web_calls, cli_calls = [], []
+    monkeypatch.setattr(api.db, "search_records_cli", lambda *args: cli_calls.append(args) or ([ROW], 6))
+    capsys.readouterr()
+    query = "author=student&category=Work&date_from=2026-11-01&date_to=2026-11-30&sort=title&direction=asc"
+    response = client.get(f"/api/cli/records/search?{query}&page=2&page_size=4", headers=headers)
+    assert response.status_code == 200
+    assert response.json == {"items": [api.serialize_record(ROW)], "page": 2,
+                             "page_size": 4, "total": 6, "total_pages": 2}
+    filters = cli_calls[0][1]
+    assert filters == {"author": "student", "category": "Work",
+                       "date_from": datetime.date(2026, 11, 1), "date_to": datetime.date(2026, 11, 30)}
+    assert cli_calls[0][2:6] == (2, 4, "title", "asc")
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["operation"] == "search"
+    assert event["request_id"] == cli_calls[0][6]
+
+    # The same parameters reach the Web search with the same filters.
+    monkeypatch.setattr(api.db, "search_records", lambda *args: web_calls.append(args) or ([ROW], 6))
+    web = logged_in_client(monkeypatch, settings)
+    assert web.get(f"/api/web/records/search?{query}").status_code == 200
+    assert web_calls[0][1] == filters
+
+    assert client.get("/api/cli/records/search", headers=headers).json["page_size"] == 5
+    assert cli_calls[1][1]["date_from"] is None and cli_calls[1][1]["date_to"] is None
+
+
+def test_cli_search_invalid_parameters_and_database_failure(monkeypatch, settings):
+    client, headers = cli_record_client(monkeypatch, settings)
+    for query in ("page=0", "page=nope", "page_size=0", "page_size=51", "sort=bad", "direction=bad",
+                  "date_from=bad", "date_to=bad", "date_from=2026-11-30&date_to=2026-11-01"):
+        assert client.get("/api/cli/records/search?" + query, headers=headers).status_code == 400
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "search_records_cli", fail)
+    assert client.get("/api/cli/records/search", headers=headers).status_code == 503
