@@ -327,4 +327,43 @@ def create_app(config=None, initialize=True):
         log_event("INFO", "update", "success", g.request_id, "Record updated", "cli")
         return jsonify(serialize_record(row))
 
+    @app.get("/api/cli/records")
+    @cli_auth_required("list")
+    def cli_list_records():
+        try:
+            page = int(request.args.get("page", "1"))
+            page_size = int(request.args.get("page_size", "5"))
+        except ValueError:
+            page = page_size = 0
+        sort = request.args.get("sort", "study_date")
+        direction = request.args.get("direction", "desc")
+        if (page < 1 or not 1 <= page_size <= 50 or sort not in db.SORT_COLUMNS
+                or direction not in ("asc", "desc")):
+            log_event("WARN", "list", "error", g.request_id, "Invalid listing parameters", "cli")
+            return jsonify(error="Invalid listing parameters"), 400
+        try:
+            rows, total = db.list_records_cli(app.config["DATABASE_URL"], page, page_size,
+                                              sort, direction, g.request_id)
+        except Exception:
+            log_event("ERROR", "list", "error", g.request_id, "Record listing failed", "cli")
+            return jsonify(error="Records unavailable"), 503
+        log_event("INFO", "list", "success", g.request_id, "Records listed", "cli")
+        return jsonify(items=[serialize_record(row) for row in rows], page=page,
+                       page_size=page_size, total=total,
+                       total_pages=(total + page_size - 1) // page_size)
+
+    @app.delete("/api/cli/records/<int:record_id>")
+    @cli_auth_required("delete")
+    def cli_delete_record(record_id):
+        try:
+            deleted = db.delete_record_cli(app.config["DATABASE_URL"], record_id, g.request_id)
+        except Exception:
+            log_event("ERROR", "delete", "error", g.request_id, "Record deletion failed", "cli")
+            return jsonify(error="Record unavailable"), 503
+        if not deleted:
+            log_event("WARN", "delete", "error", g.request_id, "Record not found", "cli")
+            return jsonify(error="Record not found"), 404
+        log_event("INFO", "delete", "success", g.request_id, "Record deleted", "cli")
+        return jsonify(id=record_id, deleted=True)
+
     return app

@@ -347,3 +347,60 @@ def test_cli_record_validation_missing_and_database_failures(monkeypatch, settin
     monkeypatch.setattr(api.db, "create_record_cli", fail)
     assert client.put("/api/cli/records/1", json=VALID, headers=headers).status_code == 503
     assert client.post("/api/cli/records", json=VALID, headers=headers).status_code == 503
+
+
+def test_cli_list_and_delete_require_valid_token(settings):
+    client = api.create_app(settings, initialize=False).test_client()
+    assert client.get("/api/cli/records").status_code == 401
+    assert client.delete("/api/cli/records/1").status_code == 401
+    bad = {"Authorization": "Bearer invalid"}
+    assert client.get("/api/cli/records", headers=bad).status_code == 401
+    assert client.delete("/api/cli/records/1", headers=bad).status_code == 401
+
+
+def test_cli_list_records_pagination_sort_and_errors(monkeypatch, settings, capsys):
+    client, headers = cli_record_client(monkeypatch, settings)
+    calls = []
+    monkeypatch.setattr(api.db, "list_records_cli", lambda *args: calls.append(args) or ([ROW], 11))
+    capsys.readouterr()
+    response = client.get("/api/cli/records?page=2&page_size=4&sort=title&direction=asc", headers=headers)
+    assert response.status_code == 200
+    assert response.json == {"items": [api.serialize_record(ROW)], "page": 2,
+                             "page_size": 4, "total": 11, "total_pages": 3}
+    assert calls[0][1:5] == (2, 4, "title", "asc")
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["operation"] == "list"
+    assert event["request_id"] == calls[0][5]
+
+    assert client.get("/api/cli/records", headers=headers).json["page_size"] == 5
+    for query in ("page=0", "page=nope", "page_size=0", "page_size=51", "page_size=x",
+                  "sort=not-a-column", "direction=sideways"):
+        assert client.get("/api/cli/records?" + query, headers=headers).status_code == 400
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "list_records_cli", fail)
+    assert client.get("/api/cli/records", headers=headers).status_code == 503
+
+
+def test_cli_delete_record_success_missing_and_failure(monkeypatch, settings, capsys):
+    client, headers = cli_record_client(monkeypatch, settings)
+    calls = []
+    monkeypatch.setattr(api.db, "delete_record_cli", lambda *args: calls.append(args) or True)
+    capsys.readouterr()
+    response = client.delete("/api/cli/records/7", headers=headers)
+    assert response.status_code == 200 and response.json == {"id": 7, "deleted": True}
+    assert calls[0][1] == 7
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["operation"] == "delete"
+    assert event["request_id"] == calls[0][2]
+
+    monkeypatch.setattr(api.db, "delete_record_cli", lambda *_: False)
+    assert client.delete("/api/cli/records/8", headers=headers).status_code == 404
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "delete_record_cli", fail)
+    assert client.delete("/api/cli/records/7", headers=headers).status_code == 503

@@ -125,6 +125,43 @@ def test_record_commands_report_api_validation_and_auth_errors(monkeypatch, caps
     assert "HTTP 401: Unauthorized" in capsys.readouterr().err
 
 
+def test_list_and_delete_call_only_the_cli_api(monkeypatch, capsys):
+    calls = []
+
+    def request_api(*args, **kwargs):
+        calls.append((args, kwargs))
+        if len(args) > 2 and args[2] == "DELETE":
+            return 200, {"id": 17, "deleted": True}
+        return 200, {"items": [{"id": 17, "study_date": "2026-11-15", "title": "Git",
+                                "topic": "Worktree", "minutes": 30}],
+                     "page": 2, "page_size": 3, "total": 4, "total_pages": 2}
+
+    monkeypatch.setattr(cli, "call_api", request_api)
+    monkeypatch.setenv("DIARIODEV_TOKEN", "env-token")
+    assert cli.main(["list", "--page", "2", "--page-size", "3", "--sort", "title",
+                     "--direction", "asc"]) == 0
+    assert cli.main(["list"]) == 0
+    assert cli.main(["delete", "17"]) == 0
+    assert calls[0] == (("http://api:8000",
+                         "/api/cli/records?page=2&page_size=3&sort=title&direction=asc"), {"token": "env-token"})
+    assert calls[1][0][1] == "/api/cli/records?page=1&page_size=5&sort=study_date&direction=desc"
+    assert calls[2] == (("http://api:8000", "/api/cli/records/17", "DELETE"), {"token": "env-token"})
+    assert capsys.readouterr().out.splitlines() == [
+        "#17 | 2026-11-15 | Git | Worktree | 30 min", "Página 2 de 2 (4 registros)",
+        "#17 | 2026-11-15 | Git | Worktree | 30 min", "Página 2 de 2 (4 registros)",
+        "Registro #17 excluído.",
+    ]
+
+
+def test_list_and_delete_report_api_errors(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "call_api", lambda *_a, **_k: (404, {"error": "Record not found"}))
+    assert cli.main(["delete", "99"]) == 1
+    assert "HTTP 404: Record not found" in capsys.readouterr().err
+    monkeypatch.setattr(cli, "call_api", lambda *_a, **_k: (401, {"error": "Unauthorized"}))
+    assert cli.main(["list"]) == 1
+    assert "HTTP 401" in capsys.readouterr().err
+
+
 def test_module_entrypoint_shows_help(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cli.py", "--help"])
     with pytest.raises(SystemExit) as result:

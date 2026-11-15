@@ -214,3 +214,41 @@ def update_record_cli(database_url, record_id, record, request_id):
     except Exception:
         log_event("ERROR", "cli", "update", "error", request_id, "Record update failed")
         raise
+
+
+def list_records_cli(database_url, page, page_size, sort, direction, request_id):
+    """Return a page of records and the total, requested through the CLI endpoint."""
+    order_column = SORT_COLUMNS[sort]
+    order_direction = "ASC" if direction == "asc" else "DESC"
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM records")
+                total = cursor.fetchone()[0]
+                cursor.execute(
+                    f"SELECT {RECORD_COLUMNS} FROM records "
+                    f"ORDER BY {order_column} {order_direction}, id DESC LIMIT %s OFFSET %s",
+                    (page_size, (page - 1) * page_size),
+                )
+                rows = cursor.fetchall()
+        log_event("INFO", "cli", "list", "success", request_id, "Records listed")
+        return rows, total
+    except Exception:
+        log_event("ERROR", "cli", "list", "error", request_id, "Record listing failed")
+        raise
+
+
+def delete_record_cli(database_url, record_id, request_id):
+    """Delete one record requested through the CLI endpoint and report whether it existed."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM records WHERE id = %s RETURNING id", (record_id,))
+                deleted = cursor.fetchone() is not None
+        log_event("INFO" if deleted else "WARN", "cli", "delete",
+                  "success" if deleted else "error", request_id,
+                  "Record deleted" if deleted else "Record not found")
+        return deleted
+    except Exception:
+        log_event("ERROR", "cli", "delete", "error", request_id, "Record deletion failed")
+        raise

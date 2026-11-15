@@ -1,6 +1,6 @@
 # DiarioDev
 
-Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão na Web; a #7 adiciona autenticação por token na CLI; a #8 permite criar e editar registros pela CLI.
+Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão na Web; a #7 adiciona autenticação por token na CLI; a #8 permite criar e editar registros pela CLI; a #9 permite listar e excluir registros pela CLI.
 
 ## Rodar o sistema pela primeira vez
 
@@ -136,7 +136,7 @@ O `docker compose up -d` inicia o contêiner `cli` junto com Web, API e banco. E
 
    O resultado esperado é `Usuário: admin` (ou o nome configurado). No Bash, use `export DIARIODEV_TOKEN='TOKEN_REAL'` e depois `docker compose exec -e DIARIODEV_TOKEN="$DIARIODEV_TOKEN" cli python cli.py me`.
 
-O token vence após uma hora; execute o passo 2 novamente para renová-lo. Não publique o token. A CLI oferece `health`, `token`, `me`, `create` e `edit`. Uma senha incorreta retorna `HTTP 401: Invalid credentials`; um token ausente ou inválido retorna `HTTP 401: Unauthorized`.
+O token vence após uma hora; execute o passo 2 novamente para renová-lo. Não publique o token. A CLI oferece `health`, `token`, `me`, `create`, `edit`, `list` e `delete`. Uma senha incorreta retorna `HTTP 401: Invalid credentials`; um token ausente ou inválido retorna `HTTP 401: Unauthorized`.
 
 Para automações, `docker compose exec -T cli python cli.py token --username admin --password-stdin` lê a senha pela entrada padrão sem mostrá-la nos argumentos do processo.
 
@@ -172,6 +172,39 @@ No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"` no lugar de `-e DIARIODEV_T
 
 A CLI chama apenas esses endpoints REST. A API usa `db.py` para gravar na mesma tabela `records` utilizada pela Web. Os registros criados ou editados pela CLI aparecem na listagem Web ao abrir ou atualizar a página. Para conferir os logs correlacionados de API e banco, execute `docker compose logs -f api`: eventos `create`/`update` na camada `api` e `insert`/`update` na camada `db` compartilham `request_id` e usam `client: "cli"`.
 
+
+## Listar e excluir registros pela CLI (issue #9)
+
+Com um token válido em `$env:DIARIODEV_TOKEN` (veja "Rodar a CLI"), liste os registros com paginação e ordenação:
+
+```powershell
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py list
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py list --page 2 --page-size 3 --sort title --direction asc
+```
+
+| Opção | Valores | Padrão |
+|---|---|---|
+| `--page` | inteiro a partir de 1 | `1` |
+| `--page-size` | de 1 a 50 | `5` |
+| `--sort` | `study_date`, `title`, `topic` ou `minutes` | `study_date` |
+| `--direction` | `asc` ou `desc` | `desc` |
+
+Cada linha mostra `#id | data | título | assunto | minutos`, e a última informa a página atual, o total de páginas e o total de registros. Em empates, o ID decrescente mantém a ordem estável, como na Web.
+
+Para excluir, informe o identificador mostrado na listagem:
+
+```powershell
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py delete 3
+```
+
+A CLI responde `Registro #3 excluído.`. Um ID inexistente retorna `HTTP 404: Record not found` e parâmetros inválidos retornam `HTTP 400`; sem token válido, `HTTP 401`. No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"`. Como a CLI e a Web usam a mesma tabela `records`, o que for listado ou excluído pela CLI aparece (ou some) na tabela Web ao recarregar a página.
+
+| Método e rota | Acesso | Resultado |
+|---|---|---|
+| `GET /api/cli/records` | Bearer token | Recebe `page`, `page_size`, `sort` e `direction`; retorna `items`, `page`, `page_size`, `total` e `total_pages` (`200`), ou `400` / `401` |
+| `DELETE /api/cli/records/{id}` | Bearer token | Exclui o registro e retorna `{"id": id, "deleted": true}` (`200`); `404` se não existir, `401` sem token |
+
+A CLI chama apenas esses endpoints REST, que usam as consultas próprias `list_records_cli` e `delete_record_cli` de `db.py`. Os logs saem com `client: "cli"`, operações `list` e `delete`, e a mesma `request_id` nas camadas `api` e `db`: consulte com `docker compose logs -f api`.
 
 ## Status do registro na Web (issue #13)
 

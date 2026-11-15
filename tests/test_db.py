@@ -181,3 +181,43 @@ def test_cli_update_found_missing_and_failure(monkeypatch, capsys):
     with pytest.raises(RuntimeError):
         db.update_record_cli("database-url", 17, RECORD, "req-cli-edit-failed")
     assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+
+def test_list_records_cli_uses_requested_page_and_logs_cli(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (11,)
+    cursor.fetchall.return_value = [(7, "Git", "Worktree", "Estudo", "2026-11-15", 30, "active")]
+    rows, total = db.list_records_cli("database-url", 2, 3, "title", "asc", "req-cli-list")
+    assert total == 11 and rows[0][0] == 7
+    assert "ORDER BY title ASC, id DESC" in cursor.execute.call_args.args[0]
+    assert cursor.execute.call_args.args[1] == (3, 3)
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["operation"] == "list"
+    assert event["layer"] == "db" and event["request_id"] == "req-cli-list"
+
+    db.list_records_cli("database-url", 1, 5, "minutes", "desc", "req-cli-desc")
+    assert "ORDER BY minutes DESC, id DESC" in cursor.execute.call_args.args[0]
+    capsys.readouterr()
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.list_records_cli("database-url", 1, 5, "title", "asc", "req-cli-error")
+    assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+
+def test_delete_record_cli_found_missing_and_failure(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (7,)
+    assert db.delete_record_cli("database-url", 7, "req-cli-delete") is True
+    assert cursor.execute.call_args.args[1] == (7,)
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["operation"] == "delete" and event["status"] == "success"
+
+    cursor.fetchone.return_value = None
+    assert db.delete_record_cli("database-url", 8, "req-cli-missing") is False
+    assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.delete_record_cli("database-url", 7, "req-cli-error")
+    assert json.loads(capsys.readouterr().out)["level"] == "ERROR"

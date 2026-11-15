@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
@@ -47,6 +48,16 @@ def main(argv=None):
         command.add_argument("--study-date", required=True, help="Data do estudo (AAAA-MM-DD)")
         command.add_argument("--minutes", required=True, type=int,
                              help="Minutos estudados (0 a 1440)")
+    list_command = commands.add_parser("list", help="Listar registros com paginação e ordenação")
+    list_command.add_argument("--page", type=int, default=1, help="Página (a partir de 1)")
+    list_command.add_argument("--page-size", type=int, default=5, help="Itens por página (1 a 50)")
+    list_command.add_argument("--sort", default="study_date",
+                              choices=("study_date", "title", "topic", "minutes"),
+                              help="Campo de ordenação (padrão: study_date)")
+    list_command.add_argument("--direction", default="desc", choices=("asc", "desc"),
+                              help="Direção da ordenação (padrão: desc)")
+    delete_command = commands.add_parser("delete", help="Excluir um registro pelo identificador")
+    delete_command.add_argument("id", type=int, help="Identificador do registro")
     args = parser.parse_args(argv)
 
     try:
@@ -59,6 +70,13 @@ def main(argv=None):
                                       {"username": args.username, "password": password})
         elif args.command == "me":
             status, result = call_api(args.api_url, "/api/cli/me", token=args.token)
+        elif args.command == "list":
+            query = urlencode({"page": args.page, "page_size": args.page_size,
+                               "sort": args.sort, "direction": args.direction})
+            status, result = call_api(args.api_url, f"/api/cli/records?{query}", token=args.token)
+        elif args.command == "delete":
+            status, result = call_api(args.api_url, f"/api/cli/records/{args.id}", "DELETE",
+                                      token=args.token)
         else:
             payload = {
                 "title": args.title, "topic": args.topic, "summary": args.summary,
@@ -87,6 +105,14 @@ def main(argv=None):
         print(result["token"])
     elif args.command == "me":
         print(f"Usuário: {result['username']}")
+    elif args.command == "list":
+        for item in result["items"]:
+            print(f"#{item['id']} | {item['study_date']} | {item['title']} | "
+                  f"{item['topic']} | {item['minutes']} min")
+        print(f"Página {result['page']} de {result['total_pages']} "
+              f"({result['total']} registros)")
+    elif args.command == "delete":
+        print(f"Registro #{result['id']} excluído.")
     elif args.command == "create":
         print(f"Registro #{result['id']} criado.")
     else:
