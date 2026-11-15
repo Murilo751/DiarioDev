@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from unittest.mock import MagicMock
 
 import pytest
@@ -270,3 +271,42 @@ def test_update_status_cli_found_missing_and_failure(monkeypatch, capsys):
     with pytest.raises(RuntimeError):
         db.update_status_cli("database-url", 7, "active", "req-cli-error")
     assert json.loads(capsys.readouterr().out)["level"] == "ERROR"
+
+
+def test_export_records_combines_parameterized_filters_without_pagination(monkeypatch, capsys):
+    connect, cursor = connection_mock(monkeypatch)
+    cursor.fetchall.return_value = [tuple(range(7))] * 12
+    filters = {"author": "student' OR 1=1 --", "category": "Worktree",
+               "date_from": date(2026, 11, 1), "date_to": date(2026, 11, 15)}
+    rows = db.export_records("database-url", filters, "title", "asc", "req-export")
+    connect.assert_called_once_with("database-url")
+    assert len(rows) == 12
+    sql, parameters = cursor.execute.call_args.args
+    assert "LOWER(author) = LOWER(%s) AND STRPOS(LOWER(topic), LOWER(%s)) > 0" in sql
+    assert "study_date >= %s AND study_date <= %s" in sql
+    assert "ORDER BY title ASC, id DESC" in sql
+    assert "LIMIT" not in sql and "OFFSET" not in sql and filters["author"] not in sql
+    assert parameters == tuple(filters.values())
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "export" and event["request_id"] == "req-export"
+
+
+def test_export_records_without_filters_and_single_date_boundary(monkeypatch):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchall.return_value = []
+    assert db.export_records("database-url", {}, "study_date", "desc", "req-empty") == []
+    sql, parameters = cursor.execute.call_args.args
+    assert "WHERE" not in sql and "ORDER BY study_date DESC, id DESC" in sql
+    assert parameters == ()
+    db.export_records("database-url", {"date_to": date(2026, 11, 15)}, "minutes", "asc", "req-date")
+    assert "WHERE study_date <= %s" in cursor.execute.call_args.args[0]
+    assert cursor.execute.call_args.args[1] == (date(2026, 11, 15),)
+
+
+def test_export_records_failure_is_logged(monkeypatch, capsys):
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.export_records("database-url", {}, "title", "asc", "req-export-error")
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "export" and event["status"] == "error"
+    assert event["request_id"] == "req-export-error"

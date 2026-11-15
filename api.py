@@ -1,12 +1,14 @@
 """Web and CLI authentication and record endpoints for DiarioDev."""
 
+import csv
+import io
 import json
 import os
 from datetime import date, datetime, timezone
 from functools import wraps
 from uuid import uuid4
 
-from flask import Flask, g, jsonify, request, session
+from flask import Flask, Response, g, jsonify, request, session
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from werkzeug.security import check_password_hash
 
@@ -64,6 +66,36 @@ def serialize_record(row):
         "id": row[0], "title": row[1], "topic": row[2], "summary": row[3],
         "study_date": row[4].isoformat(), "minutes": row[5], "status": row[6],
     }
+
+
+def export_parameters(args):
+    """Validate export filters; pagination never restricts a CSV download."""
+    filters, errors = {}, {}
+    for field in ("author", "category"):
+        value = args.get(field, "").strip()
+        if value:
+            filters[field] = value
+    for field in ("date_from", "date_to"):
+        value = args.get(field, "").strip()
+        if value:
+            try:
+                filters[field] = date.fromisoformat(value)
+            except ValueError:
+                errors[field] = "Informe uma data válida (AAAA-MM-DD)"
+    if ("date_from" in filters and "date_to" in filters
+            and filters["date_from"] > filters["date_to"]):
+        errors["date_to"] = "A data final deve ser igual ou posterior à inicial"
+    sort = args.get("sort", "study_date")
+    direction = args.get("direction", "desc")
+    if sort not in db.SORT_COLUMNS:
+        errors["sort"] = "Ordenação inválida"
+    if direction not in ("asc", "desc"):
+        errors["direction"] = "Use asc ou desc"
+    allowed = {"author", "category", "date_from", "date_to", "sort", "direction",
+               "page", "page_size", "limit", "offset"}
+    if set(args) - allowed:
+        errors["filters"] = "Parâmetro de exportação desconhecido"
+    return filters, sort, direction, errors
 
 
 def create_app(config=None, initialize=True):
@@ -258,6 +290,33 @@ def create_app(config=None, initialize=True):
         log_event("INFO", "search", "success", g.request_id, "Records searched")
         return jsonify(items=[serialize_record(row) for row in rows], page=page,
                        page_size=5, total=total, total_pages=(total + 4) // 5)
+
+    @app.get("/api/web/records/export")
+    @login_required("export")
+    def export_records():
+        filters, sort, direction, errors = export_parameters(request.args)
+        if errors:
+            log_event("WARN", "export", "error", g.request_id, "Invalid export parameters")
+            return jsonify(errors=errors), 400
+        try:
+            rows = db.export_records(app.config["DATABASE_URL"], filters, sort, direction, g.request_id)
+            output = io.StringIO(newline="")
+            writer = csv.writer(output)
+            columns = ("id", "title", "topic", "summary", "study_date", "minutes", "status")
+            writer.writerow(columns)
+            for row in rows:
+                record = serialize_record(row)
+                writer.writerow([record[column] for column in columns])
+        except Exception:
+            log_event("ERROR", "export", "error", g.request_id, "Record export failed")
+            return jsonify(error="Export unavailable"), 503
+        log_event("INFO", "export", "success", g.request_id, "Records exported")
+        return Response(
+            output.getvalue().encode("utf-8-sig"),
+            content_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="registros.csv"',
+                     "Cache-Control": "no-store"},
+        )
 
     @app.delete("/api/web/records/<int:record_id>")
     @login_required("delete")

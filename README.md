@@ -242,6 +242,68 @@ A CLI responde `Registro #3: inativo.` ou `Registro #3: ativo.`. Um ID inexisten
 
 A CLI chama apenas esse endpoint REST, que usa a consulta própria `update_status_cli` de `db.py` (separada da consulta Web). Os logs saem com `client: "cli"`, operação `status` na camada `api` e `update_status` na camada `db`, com a mesma `request_id`: consulte com `docker compose logs -f api`.
 
+
+## Exportação CSV pela Web (issue #5)
+
+Após entrar, vá até **Seus registros**, aplique os filtros com **Buscar** e clique
+em **Exportar CSV**. O navegador baixa `registros.csv` com todos os resultados da
+busca, inclusive os que estão em outras páginas. A seleção de uma linha e a página
+atual não limitam o arquivo. **Limpar filtros** volta a exportar todos os registros,
+tanto ativos quanto inativos. A exportação usa os últimos filtros aplicados com
+**Buscar**; editar os campos sem buscar ainda não altera os resultados exportados.
+
+O endpoint protegido `GET /api/web/records/export` usa os mesmos filtros da
+busca da issue #4, combinados com **E**:
+
+| Parâmetro | Significado |
+|---|---|
+| `author` | Nome completo do usuário autor, sem diferenciar maiúsculas/minúsculas |
+| `category` | Trecho literal do assunto (`topic`), sem diferenciar maiúsculas/minúsculas |
+| `date_from` | Data inicial inclusiva do estudo, `AAAA-MM-DD` |
+| `date_to` | Data final inclusiva do estudo, `AAAA-MM-DD` |
+| `sort` | `study_date` (padrão), `title`, `topic` ou `minutes` |
+| `direction` | `desc` (padrão) ou `asc` |
+
+As datas também podem ser usadas separadamente. `%` e `_` não são curingas.
+A ordenação da listagem é preservada. `page`, `page_size`, `limit` e `offset` são
+aceitos e ignorados; a consulta SQL própria de exportação em `db.py` nunca aplica
+`LIMIT`/`OFFSET`. Ela não reutiliza a consulta paginada da busca.
+
+Sem sessão válida, retorna `401`. Datas inválidas, intervalo invertido, ordenação
+inválida ou parâmetros desconhecidos retornam `400` com `errors`. Falha no banco
+retorna `503` e a página exibe uma mensagem sem baixar um arquivo de erro.
+
+O sucesso retorna `200`, `Content-Type: text/csv; charset=utf-8` e
+`Content-Disposition: attachment; filename="registros.csv"`. O CSV usa vírgula,
+cabeçalho `id,title,topic,summary,study_date,minutes,status`, datas ISO e UTF-8 com
+BOM para preservar acentos em planilhas. Aspas, vírgulas e quebras de linha são
+escapadas pelo formato CSV. Sem resultados, retorna apenas o cabeçalho.
+API e banco registram `export` com o mesmo `request_id`; consulte com
+`docker compose logs -f api`.
+
+Para conferir na Web, crie mais de cinco registros correspondentes aos mesmos
+filtros, aplique a busca, vá para a segunda página e exporte: o arquivo deve conter
+todos os resultados. Limpe os filtros e exporte todos os registros. Confira também
+uma busca sem resultados e uma tentativa sem sessão.
+
+Além dos testes unitários abaixo, `tests/test_export_integration.py` verifica a
+rota e o SQL com PostgreSQL real, criando e removendo somente um schema temporário
+próprio, sem alterar os registros da aplicação. Com o banco em execução, rode:
+
+```sh
+docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_export_integration.py'], check=True)"
+```
+
+Os testes de integração criam registros temporários, comparam o CSV com todas as
+páginas da busca e verificam filtros combinados, datas, caracteres especiais e a
+criação pela CLI após a migração de autor. Sem `TEST_DATABASE_URL`, são pulados
+na execução unitária. A criação pela CLI grava o autor do token conforme a
+implementação da #4, mantendo a compatibilidade com a coluna obrigatória.
+
+Esta entrega corresponde à **PR 2 do ciclo 3 (issue #5)** e usa a busca avançada
+da **issue #4 / PR #23**, já integrada ao `main`. A PR de exportação contém apenas
+as alterações da #5 e exige a aprovação de todos os colegas antes da integração.
+
 ## Banco e logs
 
 PostgreSQL mantém os dados no volume `postgres_data`. A tabela `users` guarda o usuário inicial e seu hash. A tabela `records` guarda título, assunto, resumo, data de estudo e minutos estudados.
