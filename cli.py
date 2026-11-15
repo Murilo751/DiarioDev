@@ -58,6 +58,10 @@ def main(argv=None):
                               help="Direção da ordenação (padrão: desc)")
     delete_command = commands.add_parser("delete", help="Excluir um registro pelo identificador")
     delete_command.add_argument("id", type=int, help="Identificador do registro")
+    status_command = commands.add_parser("status", help="Ativar ou desativar um registro")
+    status_command.add_argument("id", type=int, help="Identificador do registro")
+    status_command.add_argument("status", choices=("active", "inactive"),
+                                help="Novo status: active (ativo) ou inactive (inativo)")
     args = parser.parse_args(argv)
 
     try:
@@ -77,6 +81,9 @@ def main(argv=None):
         elif args.command == "delete":
             status, result = call_api(args.api_url, f"/api/cli/records/{args.id}", "DELETE",
                                       token=args.token)
+        elif args.command == "status":
+            status, result = call_api(args.api_url, f"/api/cli/records/{args.id}/status", "PATCH",
+                                      {"status": args.status}, args.token)
         else:
             payload = {
                 "title": args.title, "topic": args.topic, "summary": args.summary,
@@ -113,6 +120,8 @@ def main(argv=None):
               f"({result['total']} registros)")
     elif args.command == "delete":
         print(f"Registro #{result['id']} excluído.")
+    elif args.command == "status":
+        print(f"Registro #{result['id']}: {'ativo' if result['status'] == 'active' else 'inativo'}.")
     elif args.command == "create":
         print(f"Registro #{result['id']} criado.")
     else:

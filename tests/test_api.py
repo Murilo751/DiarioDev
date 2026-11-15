@@ -404,3 +404,42 @@ def test_cli_delete_record_success_missing_and_failure(monkeypatch, settings, ca
 
     monkeypatch.setattr(api.db, "delete_record_cli", fail)
     assert client.delete("/api/cli/records/7", headers=headers).status_code == 503
+
+
+def test_cli_status_requires_valid_token(settings):
+    client = api.create_app(settings, initialize=False).test_client()
+    body = {"status": "inactive"}
+    assert client.patch("/api/cli/records/1/status", json=body).status_code == 401
+    bad = {"Authorization": "Bearer invalid"}
+    assert client.patch("/api/cli/records/1/status", json=body, headers=bad).status_code == 401
+
+
+def test_cli_change_status_success_and_validation(monkeypatch, settings, capsys):
+    client, headers = cli_record_client(monkeypatch, settings)
+    calls = []
+    inactive = ROW[:6] + ("inactive",)
+    monkeypatch.setattr(api.db, "update_status_cli", lambda *args: calls.append(args) or inactive)
+    capsys.readouterr()
+    response = client.patch("/api/cli/records/1/status", json={"status": "inactive"}, headers=headers)
+    assert response.status_code == 200 and response.json["status"] == "inactive"
+    assert calls[0][1:3] == (1, "inactive")
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["operation"] == "status"
+    assert event["request_id"] == calls[0][3]
+    for body in ({"status": "paused"}, {}, ["inactive"]):
+        response = client.patch("/api/cli/records/1/status", json=body, headers=headers)
+        assert response.status_code == 400 and "status" in response.json["errors"]
+
+
+def test_cli_change_status_missing_and_database_failure(monkeypatch, settings):
+    client, headers = cli_record_client(monkeypatch, settings)
+    monkeypatch.setattr(api.db, "update_status_cli", lambda *_: None)
+    assert client.patch("/api/cli/records/99/status", json={"status": "active"},
+                        headers=headers).status_code == 404
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "update_status_cli", fail)
+    assert client.patch("/api/cli/records/1/status", json={"status": "active"},
+                        headers=headers).status_code == 503

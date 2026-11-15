@@ -366,4 +366,23 @@ def create_app(config=None, initialize=True):
         log_event("INFO", "delete", "success", g.request_id, "Record deleted", "cli")
         return jsonify(id=record_id, deleted=True)
 
+    @app.patch("/api/cli/records/<int:record_id>/status")
+    @cli_auth_required("status")
+    def cli_change_status(record_id):
+        body = request.get_json(silent=True)
+        status = body.get("status") if isinstance(body, dict) else None
+        if status not in STATUSES:
+            log_event("WARN", "status", "error", g.request_id, "Invalid status", "cli")
+            return jsonify(errors={"status": "Use active ou inactive"}), 400
+        try:
+            row = db.update_status_cli(app.config["DATABASE_URL"], record_id, status, g.request_id)
+        except Exception:
+            log_event("ERROR", "status", "error", g.request_id, "Record status update failed", "cli")
+            return jsonify(error="Record unavailable"), 503
+        if row is None:
+            log_event("WARN", "status", "error", g.request_id, "Record not found", "cli")
+            return jsonify(error="Record not found"), 404
+        log_event("INFO", "status", "success", g.request_id, "Record status updated", "cli")
+        return jsonify(serialize_record(row))
+
     return app
