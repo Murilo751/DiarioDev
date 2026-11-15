@@ -73,6 +73,7 @@ def get_user(database_url, username, request_id, client="web"):
 
 
 RECORD_COLUMNS = "id, title, topic, summary, study_date, minutes"
+SORT_COLUMNS = {"study_date": "study_date", "title": "title", "topic": "topic", "minutes": "minutes"}
 
 
 def create_record(database_url, record, request_id):
@@ -111,4 +112,42 @@ def update_record(database_url, record_id, record, request_id):
         return row
     except Exception:
         log_event("ERROR", "web", "update", "error", request_id, "Record update failed")
+        raise
+
+
+def list_records(database_url, page, sort, direction, request_id):
+    """Return a stable five-item page and the total number of records."""
+    order_column = SORT_COLUMNS[sort]
+    order_direction = "ASC" if direction == "asc" else "DESC"
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM records")
+                total = cursor.fetchone()[0]
+                cursor.execute(
+                    f"SELECT {RECORD_COLUMNS} FROM records "
+                    f"ORDER BY {order_column} {order_direction}, id DESC LIMIT %s OFFSET %s",
+                    (5, (page - 1) * 5),
+                )
+                rows = cursor.fetchall()
+        log_event("INFO", "web", "list", "success", request_id, "Records listed")
+        return rows, total
+    except Exception:
+        log_event("ERROR", "web", "list", "error", request_id, "Record listing failed")
+        raise
+
+
+def delete_record(database_url, record_id, request_id):
+    """Delete one record and report whether it existed."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM records WHERE id = %s RETURNING id", (record_id,))
+                deleted = cursor.fetchone() is not None
+        log_event("INFO" if deleted else "WARN", "web", "delete",
+                  "success" if deleted else "error", request_id,
+                  "Record deleted" if deleted else "Record not found")
+        return deleted
+    except Exception:
+        log_event("ERROR", "web", "delete", "error", request_id, "Record deletion failed")
         raise

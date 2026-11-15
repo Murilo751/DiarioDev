@@ -205,6 +205,42 @@ def create_app(config=None, initialize=True):
         log_event("INFO", "update", "success", g.request_id, "Registro atualizado")
         return jsonify(serialize_record(row))
 
+    @app.get("/api/web/records")
+    @login_required("list")
+    def list_records():
+        page_text = request.args.get("page", "1")
+        sort = request.args.get("sort", "study_date")
+        direction = request.args.get("direction", "desc")
+        try:
+            page = int(page_text)
+        except ValueError:
+            page = 0
+        if page < 1 or sort not in db.SORT_COLUMNS or direction not in ("asc", "desc"):
+            log_event("WARN", "list", "error", g.request_id, "Invalid listing parameters")
+            return jsonify(error="Invalid listing parameters"), 400
+        try:
+            rows, total = db.list_records(app.config["DATABASE_URL"], page, sort, direction, g.request_id)
+        except Exception:
+            log_event("ERROR", "list", "error", g.request_id, "Record listing failed")
+            return jsonify(error="Records unavailable"), 503
+        log_event("INFO", "list", "success", g.request_id, "Records listed")
+        return jsonify(items=[serialize_record(row) for row in rows], page=page,
+                       page_size=5, total=total, total_pages=(total + 4) // 5)
+
+    @app.delete("/api/web/records/<int:record_id>")
+    @login_required("delete")
+    def delete_record(record_id):
+        try:
+            deleted = db.delete_record(app.config["DATABASE_URL"], record_id, g.request_id)
+        except Exception:
+            log_event("ERROR", "delete", "error", g.request_id, "Record deletion failed")
+            return jsonify(error="Record unavailable"), 503
+        if not deleted:
+            log_event("WARN", "delete", "error", g.request_id, "Record not found")
+            return jsonify(error="Record not found"), 404
+        log_event("INFO", "delete", "success", g.request_id, "Record deleted")
+        return "", 204
+
     @app.get("/api/cli/health")
     def cli_health():
         log_event("INFO", "health", "success", g.request_id, "CLI API healthy", "cli")

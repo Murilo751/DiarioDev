@@ -1,6 +1,6 @@
 # DiarioDev
 
-Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição de registros; a #7 adiciona a CLI com autenticação por token. Listagem e outras operações de registros virão nas próximas issues.
+Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão na Web; a #7 adiciona a CLI com autenticação por token.
 
 ## Configurar, iniciar e entrar (issue #1)
 
@@ -43,6 +43,8 @@ Se o banco informar `Database is uninitialized and superuser password is not spe
 | `POST /api/web/logout` | Sessão | Encerra a sessão ou retorna `401` |
 | `POST /api/web/records` | Sessão | Cria um registro (`201`), ou retorna `400` com `errors` por campo / `401` |
 | `PUT /api/web/records/{id}` | Sessão | Edita um registro (`200`), ou retorna `400` / `401` / `404` |
+| `GET /api/web/records` | Sessão | Lista cinco registros por página, com ordenação; retorna `401` sem sessão |
+| `DELETE /api/web/records/{id}` | Sessão | Exclui um registro (`204`), ou retorna `401` / `404` |
 
 O cookie da sessão é `HttpOnly` e `SameSite=Lax`. A página acessa a API pela mesma origem usando o proxy do Nginx. Rotas funcionais adicionadas nas próximas issues também deverão exigir sessão válida.
 
@@ -74,6 +76,14 @@ curl -b cookies.txt -H 'Content-Type: application/json' -d '{"title":"Git","topi
 ```
 
 Logs: a API registra `create` e `update` (sucesso, validação, não encontrado e falha) e `db.py` registra `insert` e `update`, com o mesmo `request_id`.
+
+## Listagem e exclusão na Web (issue #3)
+
+Ao entrar ou recarregar a página com uma sessão válida, a tabela busca os registros no banco e mostra **título, assunto, data do estudo e minutos estudados**. Cada página tem cinco itens. Os controles permitem ordenar por qualquer um desses campos em ordem crescente ou decrescente e navegar entre páginas. Em empates, o ID decrescente mantém uma ordem estável.
+
+Selecione um registro pela primeira coluna e clique em **Excluir selecionado**. Após a confirmação, a página chama `DELETE /api/web/records/{id}` e atualiza a tabela. O formulário de cadastro/edição também atualiza a tabela após salvar. Se o último item de uma página for excluído, a página volta para a anterior.
+
+`GET /api/web/records` aceita `page` (inteiro a partir de 1), `sort` (`study_date`, `title`, `topic` ou `minutes`) e `direction` (`asc` ou `desc`). Os padrões são `page=1`, `sort=study_date` e `direction=desc`. A resposta contém `items`, `page`, `page_size`, `total` e `total_pages`; parâmetros inválidos retornam `400`. O registro inexistente retorna `404` na exclusão. Listagem e exclusão exigem login e geram logs JSON correlacionados nas camadas API e banco.
 
 ## CLI e autenticação (issue #7)
 
@@ -133,7 +143,7 @@ Os testes unitários rodam em contêiner e exigem 100% de cobertura de linhas em
 docker compose run --rm --no-deps --build tests
 ```
 
-Nesta versão, o resultado esperado é **21 testes aprovados e 100% de cobertura**. Para consultar os logs JSON da API e do acesso ao banco, use `docker compose logs -f api`; pressione `Ctrl+C` para parar de acompanhar os logs.
+Nesta versão, o resultado esperado é **25 testes aprovados e 100% de cobertura**. Para consultar os logs JSON da API e do acesso ao banco, use `docker compose logs -f api`; pressione `Ctrl+C` para parar de acompanhar os logs.
 
 Para encerrar os serviços sem apagar os dados do volume PostgreSQL:
 
