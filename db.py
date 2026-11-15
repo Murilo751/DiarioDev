@@ -55,7 +55,7 @@ def initialize(database_url, username, password_hash, request_id):
         raise
 
 
-def get_user(database_url, username, request_id):
+def get_user(database_url, username, request_id, client="web"):
     """Read a user for login without logging credentials or password hashes."""
     try:
         with psycopg.connect(database_url) as connection:
@@ -65,10 +65,10 @@ def get_user(database_url, username, request_id):
                     (username,),
                 )
                 user = cursor.fetchone()
-        log_event("INFO", "web", "get_user", "success", request_id, "User lookup completed")
+        log_event("INFO", client, "get_user", "success", request_id, "User lookup completed")
         return user
     except Exception:
-        log_event("ERROR", "web", "get_user", "error", request_id, "User lookup failed")
+        log_event("ERROR", client, "get_user", "error", request_id, "User lookup failed")
         raise
 
 

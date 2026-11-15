@@ -1,4 +1,10 @@
 .env
 .coverage
+.coverage.*
 .pytest_cache/
 __pycache__/
+*.py[cod]
+.venv/
+.idea/
+htmlcov/
+cookies.txt

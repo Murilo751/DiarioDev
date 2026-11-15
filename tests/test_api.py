@@ -1,3 +1,4 @@
+import datetime
 import json
 
 import pytest
@@ -94,8 +95,6 @@ def test_login_session_and_logout(monkeypatch, settings, capsys):
     assert [event["operation"] for event in events] == ["login", "me", "logout", "me"]
 
 
-import datetime
-
 VALID = {"title": "Git", "topic": "Worktree", "summary": "Estudo", "study_date": "2026-11-15", "minutes": 30}
 ROW = (1, "Git", "Worktree", "Estudo", datetime.date(2026, 11, 15), 30)
 
@@ -154,5 +153,54 @@ def test_update_record_found_missing_and_failure(monkeypatch, settings):
 
     monkeypatch.setattr(api.db, "update_record", fail)
     assert client.put("/api/web/records/1", json=VALID).status_code == 503
+
     monkeypatch.setattr(api.db, "create_record", fail)
     assert client.post("/api/web/records", json=VALID).status_code == 503
+
+
+def test_cli_health_token_and_protected_command(monkeypatch, settings, capsys):
+    request_ids = []
+
+    def lookup(_url, username, request_id, client):
+        assert username == "student" and client == "cli"
+        request_ids.append(request_id)
+        return (1, username, settings["INITIAL_PASSWORD_HASH"])
+
+    monkeypatch.setattr(api.db, "get_user", lookup)
+    client = api.create_app(settings, initialize=False).test_client()
+    assert client.get("/api/cli/health").json == {"status": "ok"}
+    assert client.get("/api/cli/me").status_code == 401
+    assert client.get("/api/cli/me", headers={"Authorization": "Bearer invalid"}).status_code == 401
+    response = client.post("/api/cli/token", json={
+        "username": "student", "password": "correct-password",
+    })
+    assert response.status_code == 200
+    assert response.json["token_type"] == "Bearer"
+    assert response.json["expires_in"] == 3600
+    token = response.json["token"]
+    assert client.get("/api/cli/me", headers={"Authorization": f"Bearer {token}"}).json == {
+        "username": "student",
+    }
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [event["operation"] for event in events] == ["health", "me", "me", "token", "me"]
+    assert all(event["client"] == "cli" for event in events)
+    assert events[3]["request_id"] == request_ids[0]
+    assert token not in str(events)
+
+
+def test_cli_token_failures(monkeypatch, settings, capsys):
+    client = api.create_app(settings, initialize=False).test_client()
+    assert client.post("/api/cli/token", json=["invalid"]).status_code == 401
+    assert client.post("/api/cli/token", json={"username": 1, "password": "x"}).status_code == 401
+
+    monkeypatch.setattr(api.db, "get_user", lambda *_: None)
+    assert client.post("/api/cli/token", json={"username": "student", "password": "x"}).status_code == 401
+    monkeypatch.setattr(api.db, "get_user", lambda *_: (1, "student", settings["INITIAL_PASSWORD_HASH"]))
+    assert client.post("/api/cli/token", json={"username": "student", "password": "wrong"}).status_code == 401
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "get_user", fail)
+    assert client.post("/api/cli/token", json={"username": "student", "password": "x"}).status_code == 503
+    assert "password" not in capsys.readouterr().out

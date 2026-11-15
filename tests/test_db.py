@@ -80,3 +80,10 @@ def test_update_record_found_missing_and_failure(monkeypatch, capsys):
     with pytest.raises(RuntimeError):
         db.update_record("database-url", 7, RECORD, "req-9")
     assert json.loads(capsys.readouterr().out)["operation"] == "update"
+
+def test_cli_user_lookup_logs_cli_client(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (1, "student", "hash")
+    assert db.get_user("database-url", "student", "req-cli", "cli") == (1, "student", "hash")
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["request_id"] == "req-cli"
