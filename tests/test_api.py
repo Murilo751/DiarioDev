@@ -96,7 +96,7 @@ def test_login_session_and_logout(monkeypatch, settings, capsys):
 
 
 VALID = {"title": "Git", "topic": "Worktree", "summary": "Estudo", "study_date": "2026-11-15", "minutes": 30}
-ROW = (1, "Git", "Worktree", "Estudo", datetime.date(2026, 11, 15), 30)
+ROW = (1, "Git", "Worktree", "Estudo", datetime.date(2026, 11, 15), 30, "active")
 
 
 def logged_in_client(monkeypatch, settings):
@@ -112,6 +112,7 @@ def test_record_routes_require_login(settings):
     assert client.put("/api/web/records/1", json=VALID).status_code == 401
     assert client.get("/api/web/records").status_code == 401
     assert client.delete("/api/web/records/1").status_code == 401
+    assert client.patch("/api/web/records/1/status", json={"status": "inactive"}).status_code == 401
 
 
 def test_create_record(monkeypatch, settings, capsys):
@@ -122,7 +123,7 @@ def test_create_record(monkeypatch, settings, capsys):
     response = client.post("/api/web/records", json={**VALID, "title": "  Git  "})
     assert response.status_code == 201
     assert response.json == {"id": 1, "title": "Git", "topic": "Worktree", "summary": "Estudo",
-                             "study_date": "2026-11-15", "minutes": 30}
+                             "study_date": "2026-11-15", "minutes": 30, "status": "active"}
     assert calls[0][0]["title"] == "Git" and calls[0][0]["study_date"] == datetime.date(2026, 11, 15)
     event = json.loads(capsys.readouterr().out)
     assert event["operation"] == "create" and event["request_id"] == calls[0][1]
@@ -251,3 +252,31 @@ def test_cli_token_failures(monkeypatch, settings, capsys):
     monkeypatch.setattr(api.db, "get_user", fail)
     assert client.post("/api/cli/token", json={"username": "student", "password": "x"}).status_code == 503
     assert "password" not in capsys.readouterr().out
+
+
+def test_change_status(monkeypatch, settings, capsys):
+    client = logged_in_client(monkeypatch, settings)
+    calls = []
+    inactive = ROW[:6] + ("inactive",)
+    monkeypatch.setattr(api.db, "update_status", lambda url, rid_, status, request_id: calls.append((rid_, status, request_id)) or inactive)
+    capsys.readouterr()
+    response = client.patch("/api/web/records/1/status", json={"status": "inactive"})
+    assert response.status_code == 200 and response.json["status"] == "inactive"
+    event = json.loads(capsys.readouterr().out)
+    assert calls[0][:2] == (1, "inactive") and event["operation"] == "status"
+    assert event["request_id"] == calls[0][2]
+
+
+def test_change_status_errors(monkeypatch, settings):
+    client = logged_in_client(monkeypatch, settings)
+    for body in ({"status": "paused"}, {}, ["inactive"]):
+        response = client.patch("/api/web/records/1/status", json=body)
+        assert response.status_code == 400 and "status" in response.json["errors"]
+    monkeypatch.setattr(api.db, "update_status", lambda *_: None)
+    assert client.patch("/api/web/records/99/status", json={"status": "active"}).status_code == 404
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "update_status", fail)
+    assert client.patch("/api/web/records/1/status", json={"status": "active"}).status_code == 503

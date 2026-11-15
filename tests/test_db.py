@@ -18,7 +18,7 @@ def test_initialize_creates_schema_and_updates_initial_user(monkeypatch, capsys)
     connect, cursor = connection_mock(monkeypatch)
     db.initialize("database-url", "student", "scrypt:hash", "req-1")
     connect.assert_called_once_with("database-url")
-    assert cursor.execute.call_count == 3
+    assert cursor.execute.call_count == 4
     assert cursor.execute.call_args.args[1] == ("student", "scrypt:hash")
     event = json.loads(capsys.readouterr().out)
     assert event["layer"] == "db" and event["request_id"] == "req-1"
@@ -53,7 +53,7 @@ RECORD = {"title": "Git", "topic": "Worktree", "summary": "Estudo", "study_date"
 
 def test_create_record_and_failure(monkeypatch, capsys):
     connect, cursor = connection_mock(monkeypatch)
-    cursor.fetchone.return_value = (1, "Git", "Worktree", "Estudo", "2026-11-15", 30)
+    cursor.fetchone.return_value = (1, "Git", "Worktree", "Estudo", "2026-11-15", 30, "active")
     assert db.create_record("database-url", RECORD, "req-5")[0] == 1
     assert cursor.execute.call_args.args[1] == ("Git", "Worktree", "Estudo", "2026-11-15", 30)
     event = json.loads(capsys.readouterr().out)
@@ -67,7 +67,7 @@ def test_create_record_and_failure(monkeypatch, capsys):
 
 def test_update_record_found_missing_and_failure(monkeypatch, capsys):
     connect, cursor = connection_mock(monkeypatch)
-    cursor.fetchone.return_value = (7, "Git", "Worktree", "Estudo", "2026-11-15", 30)
+    cursor.fetchone.return_value = (7, "Git", "Worktree", "Estudo", "2026-11-15", 30, "active")
     assert db.update_record("database-url", 7, RECORD, "req-7")[0] == 7
     assert cursor.execute.call_args.args[1][-1] == 7
     assert "updated" in json.loads(capsys.readouterr().out)["message"]
@@ -87,7 +87,6 @@ def test_cli_user_lookup_logs_cli_client(monkeypatch, capsys):
     assert db.get_user("database-url", "student", "req-cli", "cli") == (1, "student", "hash")
     event = json.loads(capsys.readouterr().out)
     assert event["client"] == "cli" and event["request_id"] == "req-cli"
-
 
 def test_list_records_uses_stable_page_and_logs(monkeypatch, capsys):
     _, cursor = connection_mock(monkeypatch)
@@ -109,7 +108,6 @@ def test_list_records_uses_stable_page_and_logs(monkeypatch, capsys):
         db.list_records("database-url", 1, "title", "asc", "req-error")
     assert json.loads(capsys.readouterr().out)["status"] == "error"
 
-
 def test_delete_record_found_missing_and_failure(monkeypatch, capsys):
     _, cursor = connection_mock(monkeypatch)
     cursor.fetchone.return_value = (7,)
@@ -126,4 +124,19 @@ def test_delete_record_found_missing_and_failure(monkeypatch, capsys):
     monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
     with pytest.raises(RuntimeError):
         db.delete_record("database-url", 7, "req-error")
+def test_update_status_found_missing_and_failure(monkeypatch, capsys):
+    connect, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (7, "Git", "Worktree", "Estudo", "2026-11-15", 30, "inactive")
+    assert db.update_status("database-url", 7, "inactive", "req-10")[6] == "inactive"
+    assert cursor.execute.call_args.args[1] == ("inactive", 7)
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "update_status" and event["request_id"] == "req-10"
+
+    cursor.fetchone.return_value = None
+    assert db.update_status("database-url", 8, "active", "req-11") is None
+    assert "not found" in json.loads(capsys.readouterr().out)["message"]
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.update_status("database-url", 7, "active", "req-12")
     assert json.loads(capsys.readouterr().out)["status"] == "error"

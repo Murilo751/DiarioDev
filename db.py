@@ -42,6 +42,10 @@ def initialize(database_url, username, password_hash, request_id):
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
                 """)
+                cursor.execute(
+                    "ALTER TABLE records ADD COLUMN IF NOT EXISTS status TEXT NOT NULL "
+                    "DEFAULT 'active' CHECK (status IN ('active', 'inactive'))"
+                )
                 cursor.execute("""
                     INSERT INTO users (id, username, password_hash)
                     VALUES (1, %s, %s)
@@ -72,7 +76,7 @@ def get_user(database_url, username, request_id, client="web"):
         raise
 
 
-RECORD_COLUMNS = "id, title, topic, summary, study_date, minutes"
+RECORD_COLUMNS = "id, title, topic, summary, study_date, minutes, status"
 SORT_COLUMNS = {"study_date": "study_date", "title": "title", "topic": "topic", "minutes": "minutes"}
 
 
@@ -150,4 +154,22 @@ def delete_record(database_url, record_id, request_id):
         return deleted
     except Exception:
         log_event("ERROR", "web", "delete", "error", request_id, "Record deletion failed")
+        raise
+
+
+def update_status(database_url, record_id, status, request_id):
+    """Set a record's status and return the stored row, or None when it does not exist."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE records SET status = %s WHERE id = %s RETURNING " + RECORD_COLUMNS,
+                    (status, record_id),
+                )
+                row = cursor.fetchone()
+        log_event("INFO", "web", "update_status", "success", request_id,
+                  "Record status updated" if row else "Record not found")
+        return row
+    except Exception:
+        log_event("ERROR", "web", "update_status", "error", request_id, "Record status update failed")
         raise
