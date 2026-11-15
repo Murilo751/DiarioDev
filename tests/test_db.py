@@ -18,7 +18,7 @@ def test_initialize_creates_schema_and_updates_initial_user(monkeypatch, capsys)
     connect, cursor = connection_mock(monkeypatch)
     db.initialize("database-url", "student", "scrypt:hash", "req-1")
     connect.assert_called_once_with("database-url")
-    assert cursor.execute.call_count == 4
+    assert cursor.execute.call_count == 7
     assert cursor.execute.call_args.args[1] == ("student", "scrypt:hash")
     event = json.loads(capsys.readouterr().out)
     assert event["layer"] == "db" and event["request_id"] == "req-1"
@@ -48,14 +48,14 @@ def test_user_lookup_and_failure(monkeypatch, capsys):
     assert failure["request_id"] == "req-4" and failure["status"] == "error"
 
 
-RECORD = {"title": "Git", "topic": "Worktree", "summary": "Estudo", "study_date": "2026-11-15", "minutes": 30}
+RECORD = {"title": "Git", "topic": "Worktree", "summary": "Estudo", "study_date": "2026-11-15", "minutes": 30, "author": "student"}
 
 
 def test_create_record_and_failure(monkeypatch, capsys):
     connect, cursor = connection_mock(monkeypatch)
     cursor.fetchone.return_value = (1, "Git", "Worktree", "Estudo", "2026-11-15", 30, "active")
     assert db.create_record("database-url", RECORD, "req-5")[0] == 1
-    assert cursor.execute.call_args.args[1] == ("Git", "Worktree", "Estudo", "2026-11-15", 30)
+    assert cursor.execute.call_args.args[1] == ("Git", "Worktree", "Estudo", "2026-11-15", 30, "student")
     event = json.loads(capsys.readouterr().out)
     assert event["operation"] == "insert" and event["request_id"] == "req-5"
 
@@ -108,6 +108,36 @@ def test_list_records_uses_stable_page_and_logs(monkeypatch, capsys):
         db.list_records("database-url", 1, "title", "asc", "req-error")
     assert json.loads(capsys.readouterr().out)["status"] == "error"
 
+
+def test_search_combines_filters_and_logs_reads(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (1,)
+    cursor.fetchall.return_value = [(7, "Git", "Worktree", "Estudo", "2026-11-15", 30, "active")]
+    filters = {"author": "student", "category": "Work", "date_from": "2026-11-01", "date_to": "2026-11-30"}
+    rows, total = db.search_records("database-url", filters, 2, "title", "asc", "req-search")
+    assert total == 1 and rows[0][0] == 7
+    assert cursor.execute.call_count == 2
+    count_sql, count_args = cursor.execute.call_args_list[0].args
+    list_sql, list_args = cursor.execute.call_args_list[1].args
+    assert all(fragment in count_sql for fragment in (
+        "LOWER(author) = LOWER(%s)", "STRPOS(LOWER(topic), LOWER(%s)) > 0", "study_date >= %s", "study_date <= %s"))
+    assert "ORDER BY title ASC, id DESC" in list_sql
+    assert count_args == ["student", "Work", "2026-11-01", "2026-11-30"]
+    assert list_args == ("student", "Work", "2026-11-01", "2026-11-30", 5, 5)
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "search" and event["request_id"] == "req-search"
+
+    empty = {"author": "", "category": "", "date_from": None, "date_to": None}
+    db.search_records("database-url", empty, 1, "minutes", "desc", "req-empty")
+    assert "WHERE" not in cursor.execute.call_args.args[0]
+    assert "ORDER BY minutes DESC" in cursor.execute.call_args.args[0]
+    capsys.readouterr()
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.search_records("database-url", filters, 1, "title", "asc", "req-error")
+    assert json.loads(capsys.readouterr().out)["status"] == "error"
+
 def test_delete_record_found_missing_and_failure(monkeypatch, capsys):
     _, cursor = connection_mock(monkeypatch)
     cursor.fetchone.return_value = (7,)
@@ -149,7 +179,7 @@ def test_cli_insert_uses_records_table_and_logs_result(monkeypatch, capsys):
     connect.assert_called_once_with("database-url")
     sql, values = cursor.execute.call_args.args
     assert "INSERT INTO records" in sql and "RETURNING" in sql
-    assert values == ("Git", "Worktree", "Estudo", "2026-11-15", 30)
+    assert values == ("Git", "Worktree", "Estudo", "2026-11-15", 30, "student")
     event = json.loads(capsys.readouterr().out)
     assert (event["client"], event["operation"], event["status"], event["request_id"]) == (
         "cli", "insert", "success", "req-cli-create",

@@ -180,6 +180,7 @@ def create_app(config=None, initialize=True):
         if errors:
             log_event("WARN", "create", "error", g.request_id, "Invalid record")
             return jsonify(errors=errors), 400
+        record["author"] = session["username"]
         try:
             row = db.create_record(app.config["DATABASE_URL"], record, g.request_id)
         except Exception:
@@ -225,6 +226,36 @@ def create_app(config=None, initialize=True):
             log_event("ERROR", "list", "error", g.request_id, "Record listing failed")
             return jsonify(error="Records unavailable"), 503
         log_event("INFO", "list", "success", g.request_id, "Records listed")
+        return jsonify(items=[serialize_record(row) for row in rows], page=page,
+                       page_size=5, total=total, total_pages=(total + 4) // 5)
+
+    @app.get("/api/web/records/search")
+    @login_required("search")
+    def search_records():
+        filters = {key: request.args.get(key, "").strip() for key in
+                   ("author", "category", "date_from", "date_to")}
+        page_text = request.args.get("page", "1")
+        sort = request.args.get("sort", "study_date")
+        direction = request.args.get("direction", "desc")
+        try:
+            page = int(page_text)
+            date_from = date.fromisoformat(filters["date_from"]) if filters["date_from"] else None
+            date_to = date.fromisoformat(filters["date_to"]) if filters["date_to"] else None
+        except ValueError:
+            page = 0
+            date_from = date_to = None
+        if (page < 1 or sort not in db.SORT_COLUMNS or direction not in ("asc", "desc")
+                or (date_from and date_to and date_from > date_to)):
+            log_event("WARN", "search", "error", g.request_id, "Invalid search parameters")
+            return jsonify(error="Invalid search parameters"), 400
+        filters["date_from"], filters["date_to"] = date_from, date_to
+        try:
+            rows, total = db.search_records(app.config["DATABASE_URL"], filters, page,
+                                            sort, direction, g.request_id)
+        except Exception:
+            log_event("ERROR", "search", "error", g.request_id, "Record search failed")
+            return jsonify(error="Records unavailable"), 503
+        log_event("INFO", "search", "success", g.request_id, "Records searched")
         return jsonify(items=[serialize_record(row) for row in rows], page=page,
                        page_size=5, total=total, total_pages=(total + 4) // 5)
 
@@ -301,6 +332,7 @@ def create_app(config=None, initialize=True):
         if errors:
             log_event("WARN", "create", "error", g.request_id, "Invalid record", "cli")
             return jsonify(errors=errors), 400
+        record["author"] = g.cli_user["username"]
         try:
             row = db.create_record_cli(app.config["DATABASE_URL"], record, g.request_id)
         except Exception:
