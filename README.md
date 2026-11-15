@@ -1,6 +1,6 @@
 # DiarioDev
 
-Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão; a #4 adiciona busca avançada na Web; a #7 adiciona autenticação por token na CLI; a #8 permite criar e editar registros pela CLI; a #9 permite listar e excluir registros pela CLI; a #14 permite alterar o status pela CLI.
+Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão; a #4 adiciona busca avançada na Web; a #7 adiciona autenticação por token na CLI; a #8 permite criar e editar registros pela CLI; a #9 permite listar e excluir registros pela CLI; a #10 adiciona a busca avançada pela CLI; a #14 permite alterar o status pela CLI.
 
 ## Rodar o sistema pela primeira vez
 
@@ -145,7 +145,7 @@ O `docker compose up -d` inicia o contêiner `cli` junto com Web, API e banco. E
 
    O resultado esperado é `Usuário: admin` (ou o nome configurado). No Bash, use `export DIARIODEV_TOKEN='TOKEN_REAL'` e depois `docker compose exec -e DIARIODEV_TOKEN="$DIARIODEV_TOKEN" cli python cli.py me`.
 
-O token vence após uma hora; execute o passo 2 novamente para renová-lo. Não publique o token. A CLI oferece `health`, `token`, `me`, `create`, `edit`, `list` e `delete`. Uma senha incorreta retorna `HTTP 401: Invalid credentials`; um token ausente ou inválido retorna `HTTP 401: Unauthorized`.
+O token vence após uma hora; execute o passo 2 novamente para renová-lo. Não publique o token. A CLI oferece `health`, `token`, `me`, `create`, `edit`, `list`, `search` e `delete`. Uma senha incorreta retorna `HTTP 401: Invalid credentials`; um token ausente ou inválido retorna `HTTP 401: Unauthorized`.
 
 Para automações, `docker compose exec -T cli python cli.py token --username admin --password-stdin` lê a senha pela entrada padrão sem mostrá-la nos argumentos do processo.
 
@@ -214,6 +214,31 @@ A CLI responde `Registro #3 excluído.`. Um ID inexistente retorna `HTTP 404: Re
 | `DELETE /api/cli/records/{id}` | Bearer token | Exclui o registro e retorna `{"id": id, "deleted": true}` (`200`); `404` se não existir, `401` sem token |
 
 A CLI chama apenas esses endpoints REST, que usam as consultas próprias `list_records_cli` e `delete_record_cli` de `db.py`. Os logs saem com `client: "cli"`, operações `list` e `delete`, e a mesma `request_id` nas camadas `api` e `db`: consulte com `docker compose logs -f api`.
+
+## Busca avançada pela CLI (issue #10)
+
+Com um token válido em `$env:DIARIODEV_TOKEN` (veja "Rodar a CLI"), use `search` com os mesmos filtros da busca Web. Todos os filtros são opcionais e **combináveis** (condição `AND`):
+
+```powershell
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py search --category git
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py search --author admin --category git --date-from 2026-11-01 --date-to 2026-11-30 --sort title --direction asc
+```
+
+| Opção | Significado | Padrão |
+|---|---|---|
+| `--author` | Usuário que criou o registro, sem diferenciar maiúsculas | sem filtro |
+| `--category` | Trecho do assunto (`topic`), sem diferenciar maiúsculas | sem filtro |
+| `--date-from` / `--date-to` | Período do estudo, datas inclusivas `AAAA-MM-DD` | sem filtro |
+| `--page`, `--page-size` | Página (a partir de 1) e itens por página (1 a 50) | `1` e `5` |
+| `--sort`, `--direction` | `study_date`, `title`, `topic` ou `minutes`; `asc` ou `desc` | `study_date` e `desc` |
+
+A saída tem o mesmo formato de `list`: uma linha `#id | data | título | assunto | minutos` por registro e, no fim, a página, o total de páginas e o total de registros. **Os mesmos parâmetros produzem os mesmos resultados da busca Web**, pois ambas usam as mesmas regras de filtro, ordenação e desempate por ID; a Web usa sempre cinco itens por página, igual ao padrão da CLI. Data inválida, período invertido (`--date-from` depois de `--date-to`), página ou ordenação inválidas retornam `HTTP 400`; sem token válido, `HTTP 401`. No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"`.
+
+| Método e rota | Acesso | Resultado |
+|---|---|---|
+| `GET /api/cli/records/search` | Bearer token | Recebe `author`, `category`, `date_from`, `date_to`, `page`, `page_size`, `sort` e `direction`; retorna `items`, `page`, `page_size`, `total` e `total_pages` (`200`), ou `400` / `401` |
+
+A CLI chama apenas esse endpoint, que usa a consulta própria `search_records_cli` de `db.py`, separada da consulta da Web. Os logs saem com `client: "cli"` e operação `search` nas camadas `api` e `db`, com a mesma `request_id`; consulte com `docker compose logs -f api`.
 
 ## Status do registro na Web (issue #13)
 

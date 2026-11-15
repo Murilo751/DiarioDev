@@ -56,6 +56,18 @@ def main(argv=None):
                               help="Campo de ordenação (padrão: study_date)")
     list_command.add_argument("--direction", default="desc", choices=("asc", "desc"),
                               help="Direção da ordenação (padrão: desc)")
+    search_command = commands.add_parser("search", help="Buscar registros com filtros combináveis")
+    search_command.add_argument("--author", help="Autor do registro (usuário que o criou)")
+    search_command.add_argument("--category", help="Categoria: trecho do assunto (topic)")
+    search_command.add_argument("--date-from", help="Data inicial do estudo, inclusiva (AAAA-MM-DD)")
+    search_command.add_argument("--date-to", help="Data final do estudo, inclusiva (AAAA-MM-DD)")
+    search_command.add_argument("--page", type=int, default=1, help="Página (a partir de 1)")
+    search_command.add_argument("--page-size", type=int, default=5, help="Itens por página (1 a 50)")
+    search_command.add_argument("--sort", default="study_date",
+                                choices=("study_date", "title", "topic", "minutes"),
+                                help="Campo de ordenação (padrão: study_date)")
+    search_command.add_argument("--direction", default="desc", choices=("asc", "desc"),
+                                help="Direção da ordenação (padrão: desc)")
     delete_command = commands.add_parser("delete", help="Excluir um registro pelo identificador")
     delete_command.add_argument("id", type=int, help="Identificador do registro")
     status_command = commands.add_parser("status", help="Ativar ou desativar um registro")
@@ -78,6 +90,14 @@ def main(argv=None):
             query = urlencode({"page": args.page, "page_size": args.page_size,
                                "sort": args.sort, "direction": args.direction})
             status, result = call_api(args.api_url, f"/api/cli/records?{query}", token=args.token)
+        elif args.command == "search":
+            query = {"page": args.page, "page_size": args.page_size,
+                     "sort": args.sort, "direction": args.direction}
+            for name in ("author", "category", "date_from", "date_to"):
+                if getattr(args, name):
+                    query[name] = getattr(args, name)
+            status, result = call_api(args.api_url, f"/api/cli/records/search?{urlencode(query)}",
+                                      token=args.token)
         elif args.command == "delete":
             status, result = call_api(args.api_url, f"/api/cli/records/{args.id}", "DELETE",
                                       token=args.token)
@@ -112,7 +132,7 @@ def main(argv=None):
         print(result["token"])
     elif args.command == "me":
         print(f"Usuário: {result['username']}")
-    elif args.command == "list":
+    elif args.command in ("list", "search"):
         for item in result["items"]:
             print(f"#{item['id']} | {item['study_date']} | {item['title']} | "
                   f"{item['topic']} | {item['minutes']} min")

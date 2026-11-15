@@ -345,3 +345,39 @@ def update_status_cli(database_url, record_id, status, request_id):
     except Exception:
         log_event("ERROR", "cli", "update_status", "error", request_id, "Record status update failed")
         raise
+
+
+def search_records_cli(database_url, filters, page, page_size, sort, direction, request_id):
+    """Search with SQL of its own for the CLI, combining every provided filter."""
+    conditions, values = [], []
+    if filters["author"]:
+        conditions.append("LOWER(author) = LOWER(%s)")
+        values.append(filters["author"])
+    if filters["category"]:
+        conditions.append("STRPOS(LOWER(topic), LOWER(%s)) > 0")
+        values.append(filters["category"])
+    if filters["date_from"]:
+        conditions.append("study_date >= %s")
+        values.append(filters["date_from"])
+    if filters["date_to"]:
+        conditions.append("study_date <= %s")
+        values.append(filters["date_to"])
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    order_column = SORT_COLUMNS[sort]
+    order_direction = "ASC" if direction == "asc" else "DESC"
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM records" + where, values)
+                total = cursor.fetchone()[0]
+                cursor.execute(
+                    f"SELECT {RECORD_COLUMNS} FROM records{where} "
+                    f"ORDER BY {order_column} {order_direction}, id DESC LIMIT %s OFFSET %s",
+                    (*values, page_size, (page - 1) * page_size),
+                )
+                rows = cursor.fetchall()
+        log_event("INFO", "cli", "search", "success", request_id, "Records searched")
+        return rows, total
+    except Exception:
+        log_event("ERROR", "cli", "search", "error", request_id, "Record search failed")
+        raise
