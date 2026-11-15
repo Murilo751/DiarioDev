@@ -39,6 +39,21 @@
     .badge { padding: 4px 12px; border-radius: 999px; font-size: .85rem; font-weight: 750; background: #35465b; }
     .badge.active { background: #74d7c0; color: #10232c; }
     .note { margin-top: 48px; color: #8fa1b8; font-size: .9rem; }
+    .records { max-width: 1060px; margin: 48px auto 72px; padding: 0 24px; }
+    .records-header, .records-actions, .pagination { display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    .records-header h2 { margin-bottom: 4px; }
+    .records-actions { justify-content: flex-start; }
+    .records-actions label { margin: 0; }
+    .records select { padding: 9px; color: #fff; background: #101827; border: 1px solid #52637a; border-radius: 9px; }
+    .records button { width: auto; margin: 0; padding: 10px 16px; }
+    .records button:disabled { opacity: .5; cursor: not-allowed; }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 14px 10px; border-bottom: 1px solid #35465b; }
+    th { color: #b7c3d4; font-size: .85rem; }
+    td input { width: auto; }
+    .pagination { justify-content: flex-end; }
+    .pagination span { color: #b7c3d4; }
     @media (max-width: 720px) { main { margin-top: 3vh; grid-template-columns: 1fr; gap: 28px; } .card { padding: 24px; } }
   </style>
 </head>
@@ -97,22 +112,60 @@
       </div>
     </section>
   </main>
+  <section id="records-view" class="records hidden" aria-label="Registros de estudo">
+    <div class="records-header">
+      <div><h2>Seus registros</h2><p>Consulte e organize o que você estudou.</p></div>
+      <button id="delete-record" class="secondary" type="button" disabled>Excluir selecionado</button>
+    </div>
+    <div class="records-actions">
+      <label for="record-sort">Ordenar por</label>
+      <select id="record-sort">
+        <option value="study_date">Data do estudo</option>
+        <option value="title">Título</option>
+        <option value="topic">Assunto</option>
+        <option value="minutes">Minutos</option>
+      </select>
+      <label for="record-direction">Ordem</label>
+      <select id="record-direction"><option value="desc">Decrescente</option><option value="asc">Crescente</option></select>
+    </div>
+    <p id="list-message" class="message" role="status"></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Selecionar</th><th scope="col">Título</th><th scope="col">Assunto</th><th scope="col">Data</th><th scope="col">Minutos</th></tr></thead>
+        <tbody id="record-rows"></tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <button id="previous-page" class="secondary" type="button">Anterior</button>
+      <span id="page-info"></span>
+      <button id="next-page" class="secondary" type="button">Próxima</button>
+    </div>
+  </section>
   <script>
     const loginView = document.getElementById('login-view');
     const homeView = document.getElementById('home-view');
     const loginMessage = document.getElementById('login-message');
     const homeMessage = document.getElementById('home-message');
     const loginButton = document.getElementById('login-button');
+    const recordsView = document.getElementById('records-view');
+    const listMessage = document.getElementById('list-message');
+    const recordRows = document.getElementById('record-rows');
+    let currentPage = 1;
+    let selectedId = null;
+    let currentPageItems = 0;
 
     function showHome(username) {
       document.getElementById('display-name').textContent = username;
       loginView.classList.add('hidden');
       homeView.classList.remove('hidden');
+      recordsView.classList.remove('hidden');
+      loadRecords();
     }
 
     function showLogin() {
       homeView.classList.add('hidden');
       loginView.classList.remove('hidden');
+      recordsView.classList.add('hidden');
       document.getElementById('password').value = '';
     }
 
@@ -266,10 +319,83 @@
         startEdit(await response.json());
         recordMessage.classList.add('success');
         recordMessage.textContent = wasEditing ? 'Registro atualizado.' : 'Registro criado. Você pode editá-lo abaixo.';
+        await loadRecords();
       } catch (_) {
         recordMessage.textContent = 'Não foi possível conectar à API.';
       } finally {
         button.disabled = false;
+      }
+    });
+
+    async function loadRecords() {
+      selectedId = null;
+      document.getElementById('delete-record').disabled = true;
+      listMessage.textContent = '';
+      try {
+        const params = new URLSearchParams({
+          page: String(currentPage),
+          sort: document.getElementById('record-sort').value,
+          direction: document.getElementById('record-direction').value
+        });
+        const response = await fetch('/api/web/records?' + params);
+        if (response.status === 401) { showLogin(); return; }
+        if (!response.ok) { listMessage.textContent = 'Não foi possível carregar os registros.'; return; }
+        const result = await response.json();
+        currentPageItems = result.items.length;
+        recordRows.replaceChildren();
+        result.items.forEach((record) => {
+          const row = document.createElement('tr');
+          const selectionCell = document.createElement('td');
+          const radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = 'selected-record';
+          radio.value = record.id;
+          radio.setAttribute('aria-label', 'Selecionar ' + record.title);
+          radio.addEventListener('change', () => {
+            selectedId = record.id;
+            document.getElementById('delete-record').disabled = false;
+          });
+          selectionCell.append(radio);
+          row.append(selectionCell);
+          [record.title, record.topic, record.study_date, record.minutes].forEach((value) => {
+            const cell = document.createElement('td');
+            cell.textContent = String(value);
+            row.append(cell);
+          });
+          recordRows.append(row);
+        });
+        if (!result.items.length) listMessage.textContent = 'Nenhum registro nesta página.';
+        document.getElementById('page-info').textContent = 'Página ' + result.page + ' de ' + (result.total_pages || 1) + ' · ' + result.total + ' registros';
+        document.getElementById('previous-page').disabled = currentPage <= 1;
+        document.getElementById('next-page').disabled = currentPage >= result.total_pages;
+      } catch (_) {
+        listMessage.textContent = 'Não foi possível conectar à API.';
+      }
+    }
+
+    ['record-sort', 'record-direction'].forEach((id) => {
+      document.getElementById(id).addEventListener('change', () => { currentPage = 1; loadRecords(); });
+    });
+    document.getElementById('previous-page').addEventListener('click', () => { currentPage--; loadRecords(); });
+    document.getElementById('next-page').addEventListener('click', () => { currentPage++; loadRecords(); });
+    document.getElementById('delete-record').addEventListener('click', async () => {
+      if (selectedId === null || !window.confirm('Excluir o registro selecionado?')) return;
+      const button = document.getElementById('delete-record');
+      button.disabled = true;
+      try {
+        const response = await fetch('/api/web/records/' + selectedId, { method: 'DELETE' });
+        if (response.status === 401) { showLogin(); return; }
+        if (response.status !== 204) {
+          listMessage.textContent = response.status === 404 ? 'Registro não encontrado.' : 'Não foi possível excluir o registro.';
+          return;
+        }
+        if (currentPageItems === 1 && currentPage > 1) currentPage--;
+        await loadRecords();
+        listMessage.textContent = 'Registro excluído.';
+      } catch (_) {
+        listMessage.textContent = 'Não foi possível conectar à API.';
+      } finally {
+        button.disabled = selectedId === null;
       }
     });
 

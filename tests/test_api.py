@@ -110,6 +110,8 @@ def test_record_routes_require_login(settings):
     client = api.create_app(settings, initialize=False).test_client()
     assert client.post("/api/web/records", json=VALID).status_code == 401
     assert client.put("/api/web/records/1", json=VALID).status_code == 401
+    assert client.get("/api/web/records").status_code == 401
+    assert client.delete("/api/web/records/1").status_code == 401
     assert client.patch("/api/web/records/1/status", json={"status": "inactive"}).status_code == 401
 
 
@@ -157,6 +159,51 @@ def test_update_record_found_missing_and_failure(monkeypatch, settings):
 
     monkeypatch.setattr(api.db, "create_record", fail)
     assert client.post("/api/web/records", json=VALID).status_code == 503
+
+
+def test_list_records_pagination_sort_and_errors(monkeypatch, settings, capsys):
+    client = logged_in_client(monkeypatch, settings)
+    calls = []
+    monkeypatch.setattr(api.db, "list_records", lambda *args: calls.append(args) or ([ROW], 11))
+    capsys.readouterr()
+    response = client.get("/api/web/records?page=2&sort=title&direction=asc")
+    assert response.status_code == 200
+    assert response.json == {"items": [api.serialize_record(ROW)], "page": 2,
+                             "page_size": 5, "total": 11, "total_pages": 3}
+    assert calls[0][1:4] == (2, "title", "asc")
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "list" and event["request_id"] == calls[0][4]
+
+    assert client.get("/api/web/records?page=0").status_code == 400
+    assert client.get("/api/web/records?page=nope").status_code == 400
+    assert client.get("/api/web/records?sort=not-a-column").status_code == 400
+    assert client.get("/api/web/records?direction=sideways").status_code == 400
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "list_records", fail)
+    assert client.get("/api/web/records").status_code == 503
+
+
+def test_delete_record_success_missing_and_failure(monkeypatch, settings, capsys):
+    client = logged_in_client(monkeypatch, settings)
+    calls = []
+    monkeypatch.setattr(api.db, "delete_record", lambda *args: calls.append(args) or True)
+    capsys.readouterr()
+    assert client.delete("/api/web/records/7").status_code == 204
+    assert calls[0][1] == 7
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "delete" and event["request_id"] == calls[0][2]
+
+    monkeypatch.setattr(api.db, "delete_record", lambda *_: False)
+    assert client.delete("/api/web/records/8").status_code == 404
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "delete_record", fail)
+    assert client.delete("/api/web/records/7").status_code == 503
 
 
 def test_cli_health_token_and_protected_command(monkeypatch, settings, capsys):

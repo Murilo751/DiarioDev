@@ -88,7 +88,42 @@ def test_cli_user_lookup_logs_cli_client(monkeypatch, capsys):
     event = json.loads(capsys.readouterr().out)
     assert event["client"] == "cli" and event["request_id"] == "req-cli"
 
+def test_list_records_uses_stable_page_and_logs(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (11,)
+    cursor.fetchall.return_value = [(7, "Git", "Worktree", "Estudo", "2026-11-15", 30)]
+    rows, total = db.list_records("database-url", 2, "title", "asc", "req-list")
+    assert total == 11 and rows[0][0] == 7
+    assert "ORDER BY title ASC, id DESC" in cursor.execute.call_args.args[0]
+    assert cursor.execute.call_args.args[1] == (5, 5)
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "web" and event["request_id"] == "req-list"
 
+    db.list_records("database-url", 1, "minutes", "desc", "req-desc")
+    assert "ORDER BY minutes DESC, id DESC" in cursor.execute.call_args.args[0]
+    capsys.readouterr()
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.list_records("database-url", 1, "title", "asc", "req-error")
+    assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+def test_delete_record_found_missing_and_failure(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (7,)
+    assert db.delete_record("database-url", 7, "req-delete") is True
+    assert cursor.execute.call_args.args[1] == (7,)
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "delete" and event["status"] == "success"
+
+    cursor.fetchone.return_value = None
+    assert db.delete_record("database-url", 8, "req-missing") is False
+    event = json.loads(capsys.readouterr().out)
+    assert event["status"] == "error" and event["level"] == "WARN"
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.delete_record("database-url", 7, "req-error")
 def test_update_status_found_missing_and_failure(monkeypatch, capsys):
     connect, cursor = connection_mock(monkeypatch)
     cursor.fetchone.return_value = (7, "Git", "Worktree", "Estudo", "2026-11-15", 30, "inactive")
