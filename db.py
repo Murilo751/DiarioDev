@@ -1,4 +1,4 @@
-"""Database schema and user lookups for the Web API."""
+"""Database schema, user lookups and record persistence for the Web API."""
 
 import json
 from datetime import datetime, timezone
@@ -69,4 +69,46 @@ def get_user(database_url, username, request_id):
         return user
     except Exception:
         log_event("ERROR", "web", "get_user", "error", request_id, "User lookup failed")
+        raise
+
+
+RECORD_COLUMNS = "id, title, topic, summary, study_date, minutes"
+
+
+def create_record(database_url, record, request_id):
+    """Insert a study record and return the stored row."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO records (title, topic, summary, study_date, minutes) "
+                    "VALUES (%s, %s, %s, %s, %s) RETURNING " + RECORD_COLUMNS,
+                    (record["title"], record["topic"], record["summary"],
+                     record["study_date"], record["minutes"]),
+                )
+                row = cursor.fetchone()
+        log_event("INFO", "web", "insert", "success", request_id, "Record persisted")
+        return row
+    except Exception:
+        log_event("ERROR", "web", "insert", "error", request_id, "Record insert failed")
+        raise
+
+
+def update_record(database_url, record_id, record, request_id):
+    """Update a study record and return the stored row, or None when it does not exist."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE records SET title = %s, topic = %s, summary = %s, "
+                    "study_date = %s, minutes = %s WHERE id = %s RETURNING " + RECORD_COLUMNS,
+                    (record["title"], record["topic"], record["summary"],
+                     record["study_date"], record["minutes"], record_id),
+                )
+                row = cursor.fetchone()
+        log_event("INFO", "web", "update", "success", request_id,
+                  "Record updated" if row else "Record not found")
+        return row
+    except Exception:
+        log_event("ERROR", "web", "update", "error", request_id, "Record update failed")
         raise

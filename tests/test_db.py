@@ -46,3 +46,37 @@ def test_user_lookup_and_failure(monkeypatch, capsys):
         db.get_user("database-url", "student", "req-4")
     failure = json.loads(capsys.readouterr().out)
     assert failure["request_id"] == "req-4" and failure["status"] == "error"
+
+
+RECORD = {"title": "Git", "topic": "Worktree", "summary": "Estudo", "study_date": "2026-11-15", "minutes": 30}
+
+
+def test_create_record_and_failure(monkeypatch, capsys):
+    connect, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (1, "Git", "Worktree", "Estudo", "2026-11-15", 30)
+    assert db.create_record("database-url", RECORD, "req-5")[0] == 1
+    assert cursor.execute.call_args.args[1] == ("Git", "Worktree", "Estudo", "2026-11-15", 30)
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "insert" and event["request_id"] == "req-5"
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.create_record("database-url", RECORD, "req-6")
+    assert json.loads(capsys.readouterr().out)["status"] == "error"
+
+
+def test_update_record_found_missing_and_failure(monkeypatch, capsys):
+    connect, cursor = connection_mock(monkeypatch)
+    cursor.fetchone.return_value = (7, "Git", "Worktree", "Estudo", "2026-11-15", 30)
+    assert db.update_record("database-url", 7, RECORD, "req-7")[0] == 7
+    assert cursor.execute.call_args.args[1][-1] == 7
+    assert "updated" in json.loads(capsys.readouterr().out)["message"]
+
+    cursor.fetchone.return_value = None
+    assert db.update_record("database-url", 8, RECORD, "req-8") is None
+    assert "not found" in json.loads(capsys.readouterr().out)["message"]
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.update_record("database-url", 7, RECORD, "req-9")
+    assert json.loads(capsys.readouterr().out)["operation"] == "update"
