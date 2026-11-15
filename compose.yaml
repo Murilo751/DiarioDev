@@ -19,6 +19,23 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/cli/health')"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  cli:
+    build: .
+    profiles: ["tools"]
+    entrypoint: ["python", "cli.py"]
+    command: []
+    environment:
+      DIARIODEV_API_URL: http://api:8000
+      DIARIODEV_TOKEN: ${DIARIODEV_TOKEN:-}
+    depends_on:
+      api:
+        condition: service_healthy
 
   db:
     image: postgres:17-alpine
@@ -37,7 +54,7 @@ services:
   tests:
     build: .
     profiles: ["tools"]
-    command: ["pytest", "--cov=api", "--cov=db", "--cov-report=term-missing", "--cov-fail-under=100", "-q"]
+    command: ["pytest", "--cov=api", "--cov=db", "--cov=cli", "--cov-report=term-missing", "--cov-fail-under=100", "-q"]
 
 volumes:
   postgres_data:
