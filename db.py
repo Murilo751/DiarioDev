@@ -46,6 +46,9 @@ def initialize(database_url, username, password_hash, request_id):
                     "ALTER TABLE records ADD COLUMN IF NOT EXISTS status TEXT NOT NULL "
                     "DEFAULT 'active' CHECK (status IN ('active', 'inactive'))"
                 )
+                cursor.execute("ALTER TABLE records ADD COLUMN IF NOT EXISTS author TEXT")
+                cursor.execute("UPDATE records SET author = %s WHERE author IS NULL", (username,))
+                cursor.execute("ALTER TABLE records ALTER COLUMN author SET NOT NULL")
                 cursor.execute("""
                     INSERT INTO users (id, username, password_hash)
                     VALUES (1, %s, %s)
@@ -86,10 +89,10 @@ def create_record(database_url, record, request_id):
         with psycopg.connect(database_url) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "INSERT INTO records (title, topic, summary, study_date, minutes) "
-                    "VALUES (%s, %s, %s, %s, %s) RETURNING " + RECORD_COLUMNS,
+                    "INSERT INTO records (title, topic, summary, study_date, minutes, author) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) RETURNING " + RECORD_COLUMNS,
                     (record["title"], record["topic"], record["summary"],
-                     record["study_date"], record["minutes"]),
+                     record["study_date"], record["minutes"], record["author"]),
                 )
                 row = cursor.fetchone()
         log_event("INFO", "web", "insert", "success", request_id, "Record persisted")
@@ -141,6 +144,42 @@ def list_records(database_url, page, sort, direction, request_id):
         raise
 
 
+def search_records(database_url, filters, page, sort, direction, request_id):
+    """Search with independent SQL and combine all provided Web filters."""
+    conditions, values = [], []
+    if filters["author"]:
+        conditions.append("LOWER(author) = LOWER(%s)")
+        values.append(filters["author"])
+    if filters["category"]:
+        conditions.append("STRPOS(LOWER(topic), LOWER(%s)) > 0")
+        values.append(filters["category"])
+    if filters["date_from"]:
+        conditions.append("study_date >= %s")
+        values.append(filters["date_from"])
+    if filters["date_to"]:
+        conditions.append("study_date <= %s")
+        values.append(filters["date_to"])
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    order_column = SORT_COLUMNS[sort]
+    order_direction = "ASC" if direction == "asc" else "DESC"
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM records" + where, values)
+                total = cursor.fetchone()[0]
+                cursor.execute(
+                    f"SELECT {RECORD_COLUMNS} FROM records{where} "
+                    f"ORDER BY {order_column} {order_direction}, id DESC LIMIT %s OFFSET %s",
+                    (*values, 5, (page - 1) * 5),
+                )
+                rows = cursor.fetchall()
+        log_event("INFO", "web", "search", "success", request_id, "Records searched")
+        return rows, total
+    except Exception:
+        log_event("ERROR", "web", "search", "error", request_id, "Record search failed")
+        raise
+
+
 def delete_record(database_url, record_id, request_id):
     """Delete one record and report whether it existed."""
     try:
@@ -181,10 +220,10 @@ def create_record_cli(database_url, record, request_id):
         with psycopg.connect(database_url) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "INSERT INTO records (title, topic, summary, study_date, minutes) "
-                    "VALUES (%s, %s, %s, %s, %s) RETURNING " + RECORD_COLUMNS,
+                    "INSERT INTO records (title, topic, summary, study_date, minutes, author) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) RETURNING " + RECORD_COLUMNS,
                     (record["title"], record["topic"], record["summary"],
-                     record["study_date"], record["minutes"]),
+                     record["study_date"], record["minutes"], record["author"]),
                 )
                 row = cursor.fetchone()
         log_event("INFO", "cli", "insert", "success", request_id, "Record persisted")

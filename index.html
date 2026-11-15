@@ -54,6 +54,10 @@
     td input { width: auto; }
     .pagination { justify-content: flex-end; }
     .pagination span { color: #b7c3d4; }
+    .search-filters { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-top: 24px; }
+    .search-filters label { margin: 0 0 6px; }
+    .search-filters input { min-width: 150px; }
+    .search-filters button { margin-bottom: 0; }
     @media (max-width: 720px) { main { margin-top: 3vh; grid-template-columns: 1fr; gap: 28px; } .card { padding: 24px; } }
   </style>
 </head>
@@ -128,6 +132,14 @@
       <label for="record-direction">Ordem</label>
       <select id="record-direction"><option value="desc">Decrescente</option><option value="asc">Crescente</option></select>
     </div>
+    <form id="search-form" class="search-filters">
+      <div><label for="search-author">Autor</label><input id="search-author" placeholder="Usuário"></div>
+      <div><label for="search-category">Categoria (assunto)</label><input id="search-category" placeholder="Ex.: Git"></div>
+      <div><label for="search-date-from">De</label><input id="search-date-from" type="date"></div>
+      <div><label for="search-date-to">Até</label><input id="search-date-to" type="date"></div>
+      <button type="submit">Buscar</button>
+      <button id="clear-search" class="secondary" type="button">Limpar filtros</button>
+    </form>
     <p id="list-message" class="message" role="status"></p>
     <div class="table-wrap">
       <table>
@@ -153,6 +165,8 @@
     let currentPage = 1;
     let selectedId = null;
     let currentPageItems = 0;
+    let activeFilters = null;
+    let listRequestSequence = 0;
 
     function showHome(username) {
       document.getElementById('display-name').textContent = username;
@@ -328,6 +342,7 @@
     });
 
     async function loadRecords() {
+      const requestSequence = ++listRequestSequence;
       selectedId = null;
       document.getElementById('delete-record').disabled = true;
       listMessage.textContent = '';
@@ -337,10 +352,16 @@
           sort: document.getElementById('record-sort').value,
           direction: document.getElementById('record-direction').value
         });
-        const response = await fetch('/api/web/records?' + params);
+        if (activeFilters) Object.entries(activeFilters).forEach(([key, value]) => {
+          if (value) params.set(key, value);
+        });
+        const endpoint = activeFilters ? '/api/web/records/search' : '/api/web/records';
+        const response = await fetch(endpoint + '?' + params);
+        if (requestSequence !== listRequestSequence) return;
         if (response.status === 401) { showLogin(); return; }
-        if (!response.ok) { listMessage.textContent = 'Não foi possível carregar os registros.'; return; }
+        if (!response.ok) { listMessage.textContent = response.status === 400 ? 'Confira os filtros e o período informado.' : 'Não foi possível carregar os registros.'; return; }
         const result = await response.json();
+        if (requestSequence !== listRequestSequence) return;
         currentPageItems = result.items.length;
         recordRows.replaceChildren();
         result.items.forEach((record) => {
@@ -369,9 +390,28 @@
         document.getElementById('previous-page').disabled = currentPage <= 1;
         document.getElementById('next-page').disabled = currentPage >= result.total_pages;
       } catch (_) {
+        if (requestSequence !== listRequestSequence) return;
         listMessage.textContent = 'Não foi possível conectar à API.';
       }
     }
+
+    document.getElementById('search-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      activeFilters = {
+        author: document.getElementById('search-author').value.trim(),
+        category: document.getElementById('search-category').value.trim(),
+        date_from: document.getElementById('search-date-from').value,
+        date_to: document.getElementById('search-date-to').value
+      };
+      currentPage = 1;
+      loadRecords();
+    });
+    document.getElementById('clear-search').addEventListener('click', () => {
+      document.getElementById('search-form').reset();
+      activeFilters = null;
+      currentPage = 1;
+      loadRecords();
+    });
 
     ['record-sort', 'record-direction'].forEach((id) => {
       document.getElementById(id).addEventListener('change', () => { currentPage = 1; loadRecords(); });

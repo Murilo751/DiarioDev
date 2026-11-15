@@ -1,6 +1,6 @@
 # DiarioDev
 
-Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão na Web; a #7 adiciona autenticação por token na CLI; a #8 permite criar e editar registros pela CLI; a #9 permite listar e excluir registros pela CLI.
+Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão; a #4 adiciona busca avançada na Web; a #7 adiciona autenticação por token na CLI; a #8 permite criar e editar registros pela CLI; a #9 permite listar e excluir registros pela CLI; a #14 permite alterar o status pela CLI.
 
 ## Rodar o sistema pela primeira vez
 
@@ -64,6 +64,7 @@ Nas próximas vezes, use `docker compose up -d` para iniciar e `docker compose d
 | `POST /api/web/records` | Sessão | Cria um registro (`201`), ou retorna `400` com `errors` por campo / `401` |
 | `PUT /api/web/records/{id}` | Sessão | Edita um registro (`200`), ou retorna `400` / `401` / `404` |
 | `GET /api/web/records` | Sessão | Lista cinco registros por página, com ordenação; retorna `401` sem sessão |
+| `GET /api/web/records/search` | Sessão | Busca com filtros combináveis e paginação; retorna `400` para filtros inválidos e `401` sem sessão |
 | `DELETE /api/web/records/{id}` | Sessão | Exclui um registro (`204`), ou retorna `401` / `404` |
 | `PATCH /api/web/records/{id}/status` | Sessão | Recebe `{"status":"active"\|"inactive"}`; retorna o registro (`200`), `400` / `401` / `404` |
 
@@ -105,6 +106,14 @@ Ao entrar ou recarregar a página com uma sessão válida, a tabela busca os reg
 Selecione um registro pela primeira coluna e clique em **Excluir selecionado**. Após a confirmação, a página chama `DELETE /api/web/records/{id}` e atualiza a tabela. O formulário de cadastro/edição também atualiza a tabela após salvar. Se o último item de uma página for excluído, a página volta para a anterior.
 
 `GET /api/web/records` aceita `page` (inteiro a partir de 1), `sort` (`study_date`, `title`, `topic` ou `minutes`) e `direction` (`asc` ou `desc`). Os padrões são `page=1`, `sort=study_date` e `direction=desc`. A resposta contém `items`, `page`, `page_size`, `total` e `total_pages`; parâmetros inválidos retornam `400`. O registro inexistente retorna `404` na exclusão. Listagem e exclusão exigem login e geram logs JSON correlacionados nas camadas API e banco.
+
+## Busca avançada na Web (issue #4)
+
+Após o login, use os filtros **Autor**, **Categoria (assunto)** e **período** (De/Até) acima da tabela. Clique em **Buscar** para atualizar os resultados sem recarregar a página. Os filtros podem ser combinados; **Limpar filtros** volta à listagem completa. A ordenação e a paginação de cinco itens continuam funcionando nos resultados filtrados.
+
+`GET /api/web/records/search` aceita `author` (nome do usuário que criou o registro, sem diferenciar maiúsculas), `category` (trecho do campo `topic`, sem diferenciar maiúsculas), `date_from` e `date_to` (datas inclusivas em `AAAA-MM-DD`). Também aceita `page`, `sort` e `direction` com as mesmas regras da listagem. A resposta tem `items`, `page`, `page_size`, `total` e `total_pages`. Datas inválidas, período invertido, paginação ou ordenação inválida retornam `400`; sem sessão, retorna `401`.
+
+O banco adiciona a coluna `author` aos registros existentes ao iniciar: registros antigos recebem o usuário inicial configurado naquele momento. Novos registros criados pela Web ou CLI recebem automaticamente o usuário autenticado, sem campo extra no formulário ou comando. A categoria usa o campo `topic` já existente. A busca tem consulta SQL própria, combina os filtros com `AND` e registra leituras tanto na API quanto no banco com o mesmo `request_id`.
 
 ## Rodar a CLI
 
