@@ -37,6 +37,16 @@ def main(argv=None):
     token_command.add_argument("--password-stdin", action="store_true",
                                help="Ler a senha da entrada padrão")
     commands.add_parser("me", help="Verificar o token e mostrar o usuário")
+    for name, help_text in (("create", "Criar um registro"), ("edit", "Editar um registro")):
+        command = commands.add_parser(name, help=help_text)
+        if name == "edit":
+            command.add_argument("id", type=int, help="Identificador do registro")
+        command.add_argument("--title", required=True, help="Título (até 120 caracteres)")
+        command.add_argument("--topic", required=True, help="Assunto (até 60 caracteres)")
+        command.add_argument("--summary", required=True, help="Resumo (até 1000 caracteres)")
+        command.add_argument("--study-date", required=True, help="Data do estudo (AAAA-MM-DD)")
+        command.add_argument("--minutes", required=True, type=int,
+                             help="Minutos estudados (0 a 1440)")
     args = parser.parse_args(argv)
 
     try:
@@ -47,21 +57,40 @@ def main(argv=None):
                         else getpass.getpass("Senha: "))
             status, result = call_api(args.api_url, "/api/cli/token", "POST",
                                       {"username": args.username, "password": password})
-        else:
+        elif args.command == "me":
             status, result = call_api(args.api_url, "/api/cli/me", token=args.token)
+        else:
+            payload = {
+                "title": args.title, "topic": args.topic, "summary": args.summary,
+                "study_date": args.study_date, "minutes": args.minutes,
+            }
+            if args.command == "create":
+                status, result = call_api(args.api_url, "/api/cli/records", "POST",
+                                          payload, args.token)
+            else:
+                status, result = call_api(args.api_url, f"/api/cli/records/{args.id}", "PUT",
+                                          payload, args.token)
     except URLError:
         print("Não foi possível conectar à API.", file=sys.stderr)
         return 1
 
-    if status != 200:
-        print(f"HTTP {status}: {result.get('error', 'Falha na API')}", file=sys.stderr)
+    if status != (201 if args.command == "create" else 200):
+        if "errors" in result:
+            for field, message in result["errors"].items():
+                print(f"{field}: {message}", file=sys.stderr)
+        else:
+            print(f"HTTP {status}: {result.get('error', 'Falha na API')}", file=sys.stderr)
         return 1
     if args.command == "health":
         print("API da CLI saudável.")
     elif args.command == "token":
         print(result["token"])
-    else:
+    elif args.command == "me":
         print(f"Usuário: {result['username']}")
+    elif args.command == "create":
+        print(f"Registro #{result['id']} criado.")
+    else:
+        print(f"Registro #{result['id']} atualizado.")
     return 0
 
 

@@ -1,4 +1,4 @@
-"""Web authentication and record endpoints for DiarioDev."""
+"""Web and CLI authentication and record endpoints for DiarioDev."""
 
 import json
 import os
@@ -275,7 +275,6 @@ def create_app(config=None, initialize=True):
         log_event("INFO", "me", "success", g.request_id, "CLI token accepted", "cli")
         return jsonify(username=g.cli_user["username"])
 
-
     @app.patch("/api/web/records/<int:record_id>/status")
     @login_required("status")
     def change_status(record_id):
@@ -293,6 +292,39 @@ def create_app(config=None, initialize=True):
             log_event("WARN", "status", "error", g.request_id, "Record not found")
             return jsonify(error="Record not found"), 404
         log_event("INFO", "status", "success", g.request_id, "Status do registro atualizado")
+        return jsonify(serialize_record(row))
+
+    @app.post("/api/cli/records")
+    @cli_auth_required("create")
+    def cli_create_record():
+        record, errors = validate_record(request.get_json(silent=True))
+        if errors:
+            log_event("WARN", "create", "error", g.request_id, "Invalid record", "cli")
+            return jsonify(errors=errors), 400
+        try:
+            row = db.create_record_cli(app.config["DATABASE_URL"], record, g.request_id)
+        except Exception:
+            log_event("ERROR", "create", "error", g.request_id, "Record creation failed", "cli")
+            return jsonify(error="Record unavailable"), 503
+        log_event("INFO", "create", "success", g.request_id, "Record created", "cli")
+        return jsonify(serialize_record(row)), 201
+
+    @app.put("/api/cli/records/<int:record_id>")
+    @cli_auth_required("update")
+    def cli_update_record(record_id):
+        record, errors = validate_record(request.get_json(silent=True))
+        if errors:
+            log_event("WARN", "update", "error", g.request_id, "Invalid record", "cli")
+            return jsonify(errors=errors), 400
+        try:
+            row = db.update_record_cli(app.config["DATABASE_URL"], record_id, record, g.request_id)
+        except Exception:
+            log_event("ERROR", "update", "error", g.request_id, "Record update failed", "cli")
+            return jsonify(error="Record unavailable"), 503
+        if row is None:
+            log_event("WARN", "update", "error", g.request_id, "Record not found", "cli")
+            return jsonify(error="Record not found"), 404
+        log_event("INFO", "update", "success", g.request_id, "Record updated", "cli")
         return jsonify(serialize_record(row))
 
     return app

@@ -1,4 +1,4 @@
-"""Database schema, user lookups and record persistence for the Web API."""
+"""Database schema, user lookups and record persistence for Web and CLI."""
 
 import json
 from datetime import datetime, timezone
@@ -172,4 +172,45 @@ def update_status(database_url, record_id, status, request_id):
         return row
     except Exception:
         log_event("ERROR", "web", "update_status", "error", request_id, "Record status update failed")
+        raise
+
+
+def create_record_cli(database_url, record, request_id):
+    """Insert a record requested through the CLI endpoint."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO records (title, topic, summary, study_date, minutes) "
+                    "VALUES (%s, %s, %s, %s, %s) RETURNING " + RECORD_COLUMNS,
+                    (record["title"], record["topic"], record["summary"],
+                     record["study_date"], record["minutes"]),
+                )
+                row = cursor.fetchone()
+        log_event("INFO", "cli", "insert", "success", request_id, "Record persisted")
+        return row
+    except Exception:
+        log_event("ERROR", "cli", "insert", "error", request_id, "Record insert failed")
+        raise
+
+
+def update_record_cli(database_url, record_id, record, request_id):
+    """Update a record requested through the CLI endpoint."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE records SET title = %s, topic = %s, summary = %s, "
+                    "study_date = %s, minutes = %s WHERE id = %s RETURNING " + RECORD_COLUMNS,
+                    (record["title"], record["topic"], record["summary"],
+                     record["study_date"], record["minutes"], record_id),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            log_event("WARN", "cli", "update", "error", request_id, "Record not found")
+        else:
+            log_event("INFO", "cli", "update", "success", request_id, "Record updated")
+        return row
+    except Exception:
+        log_event("ERROR", "cli", "update", "error", request_id, "Record update failed")
         raise
