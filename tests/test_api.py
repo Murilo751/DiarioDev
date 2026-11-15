@@ -1,5 +1,8 @@
 import datetime
+import csv
+import io
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from werkzeug.security import generate_password_hash
@@ -474,3 +477,102 @@ def test_cli_change_status_missing_and_database_failure(monkeypatch, settings):
     monkeypatch.setattr(api.db, "update_status_cli", fail)
     assert client.patch("/api/cli/records/1/status", json={"status": "active"},
                         headers=headers).status_code == 503
+
+
+def csv_rows(response):
+    return list(csv.DictReader(io.StringIO(response.data.decode("utf-8-sig"), newline="")))
+
+
+def test_export_requires_session(settings, monkeypatch):
+    query = MagicMock()
+    monkeypatch.setattr(api.db, "export_records", query)
+    client = api.create_app(settings, initialize=False).test_client()
+    assert client.get("/api/web/records/export").status_code == 401
+    client.set_cookie("session", "invalid")
+    assert client.get("/api/web/records/export").status_code == 401
+    query.assert_not_called()
+
+
+def test_export_all_rows_ignores_pagination_and_correlates_logs(monkeypatch, settings, capsys):
+    client = logged_in_client(monkeypatch, settings)
+    connection = MagicMock()
+    cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [(number, *ROW[1:]) for number in range(1, 13)]
+    monkeypatch.setattr(api.db.psycopg, "connect", MagicMock(return_value=connection))
+    capsys.readouterr()
+    response = client.get("/api/web/records/export?page=2&page_size=5&limit=5&offset=5")
+    assert response.status_code == 200
+    assert response.content_type == "text/csv; charset=utf-8"
+    assert response.headers["Content-Disposition"] == 'attachment; filename="registros.csv"'
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.data.startswith(b"\xef\xbb\xbf")
+    assert len(csv_rows(response)) == 12
+    assert [row["id"] for row in csv_rows(response)] == [str(n) for n in range(1, 13)]
+    sql, parameters = cursor.execute.call_args.args
+    assert "LIMIT" not in sql and "OFFSET" not in sql and "WHERE" not in sql
+    assert parameters == ()
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [event["layer"] for event in events] == ["db", "api"]
+    assert all(event["operation"] == "export" and event["status"] == "success"
+               and event["client"] == "web" for event in events)
+    assert events[0]["request_id"] == events[1]["request_id"]
+
+
+def test_export_combines_filters_and_preserves_csv_fields(monkeypatch, settings):
+    client = logged_in_client(monkeypatch, settings)
+    row = (8, 'Revisão, "Git"', "Ação", "Linha 1\nLinha 2", ROW[4], 0, "inactive")
+    query = MagicMock(return_value=[row] * 8)
+    monkeypatch.setattr(api.db, "export_records", query)
+    response = client.get("/api/web/records/export", query_string={
+        "author": "  student ", "category": " Ação ", "date_from": "2026-11-01",
+        "date_to": "2026-11-30", "sort": "title", "direction": "asc", "page": 999,
+    })
+    assert response.status_code == 200 and len(csv_rows(response)) == 8
+    assert query.call_args.args[1:4] == (
+        {"author": "student", "category": "Ação", "date_from": datetime.date(2026, 11, 1),
+         "date_to": datetime.date(2026, 11, 30)}, "title", "asc",
+    )
+    assert csv_rows(response)[0] == {
+        "id": "8", "title": row[1], "topic": row[2], "summary": row[3],
+        "study_date": "2026-11-15", "minutes": "0", "status": "inactive",
+    }
+
+
+def test_export_empty_result_has_header(monkeypatch, settings):
+    client = logged_in_client(monkeypatch, settings)
+    query = MagicMock(return_value=[])
+    monkeypatch.setattr(api.db, "export_records", query)
+    response = client.get("/api/web/records/export?author=%20%20&category=")
+    assert response.status_code == 200 and csv_rows(response) == []
+    assert response.data.decode("utf-8-sig") == "id,title,topic,summary,study_date,minutes,status\r\n"
+    assert query.call_args.args[1] == {}
+
+
+@pytest.mark.parametrize("query", [
+    {"date_from": "bad"},
+    {"date_to": "2026-02-30"}, {"date_from": "2026-11-15", "date_to": "2026-11-14"},
+    {"sort": "title; DROP TABLE records"}, {"direction": "sideways"}, {"unknown": "Git"},
+])
+def test_export_rejects_invalid_filters_before_database(monkeypatch, settings, query, capsys):
+    client = logged_in_client(monkeypatch, settings)
+    export = MagicMock()
+    monkeypatch.setattr(api.db, "export_records", export)
+    capsys.readouterr()
+    response = client.get("/api/web/records/export", query_string=query)
+    assert response.status_code == 400 and response.json["errors"]
+    export.assert_not_called()
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "export" and event["status"] == "error"
+
+
+def test_export_database_failure_logs_both_layers(monkeypatch, settings, capsys):
+    client = logged_in_client(monkeypatch, settings)
+    monkeypatch.setattr(api.db.psycopg, "connect", MagicMock(side_effect=RuntimeError("db failed")))
+    capsys.readouterr()
+    response = client.get("/api/web/records/export")
+    assert response.status_code == 503 and response.json == {"error": "Export unavailable"}
+    assert "Content-Disposition" not in response.headers
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [event["layer"] for event in events] == ["db", "api"]
+    assert all(event["operation"] == "export" and event["status"] == "error" for event in events)
+    assert events[0]["request_id"] == events[1]["request_id"]

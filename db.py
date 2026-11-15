@@ -180,6 +180,40 @@ def search_records(database_url, filters, page, sort, direction, request_id):
         raise
 
 
+def export_records(database_url, filters, sort, direction, request_id):
+    """Read all matching Web records with a dedicated query and no LIMIT/OFFSET."""
+    conditions, parameters = [], []
+    if filters.get("author"):
+        conditions.append("LOWER(author) = LOWER(%s)")
+        parameters.append(filters["author"])
+    if filters.get("category"):
+        conditions.append("STRPOS(LOWER(topic), LOWER(%s)) > 0")
+        parameters.append(filters["category"])
+    if "date_from" in filters:
+        conditions.append("study_date >= %s")
+        parameters.append(filters["date_from"])
+    if "date_to" in filters:
+        conditions.append("study_date <= %s")
+        parameters.append(filters["date_to"])
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    order_column = SORT_COLUMNS[sort]
+    order_direction = "ASC" if direction == "asc" else "DESC"
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"SELECT {RECORD_COLUMNS} FROM records{where} "
+                    f"ORDER BY {order_column} {order_direction}, id DESC",
+                    tuple(parameters),
+                )
+                rows = cursor.fetchall()
+        log_event("INFO", "web", "export", "success", request_id, "Records read for CSV export")
+        return rows
+    except Exception:
+        log_event("ERROR", "web", "export", "error", request_id, "Record export query failed")
+        raise
+
+
 def delete_record(database_url, record_id, request_id):
     """Delete one record and report whether it existed."""
     try:
