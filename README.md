@@ -1,501 +1,252 @@
 # DiarioDev
 
-Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão; a #4 adiciona busca avançada na Web; a #7 adiciona autenticação por token na CLI; a #8 permite criar e editar registros pela CLI; a #9 permite listar e excluir registros pela CLI; a #10 adiciona a busca avançada pela CLI; a #12 mostra os indicadores pela CLI; a #14 permite alterar o status pela CLI.
+Diário de estudos com interface Web, CLI, API Flask e PostgreSQL. Web e CLI trabalham com os mesmos registros; todas as partes rodam pelo Docker Compose.
 
-## Rodar o sistema pela primeira vez
+## Neste guia
 
-Você precisa de Docker com Docker Compose (no Windows, Docker Desktop) e um navegador. Inicie o Docker e execute os comandos abaixo **na pasta do projeto**, onde está `compose.yaml`. Confira se o Docker está pronto com `docker info`.
+- [Início rápido](#início-rápido)
+- [Usar a Web](#usar-a-web)
+- [Usar a CLI](#usar-a-cli)
+- [API e dados](#api-e-dados)
+- [Logs](#logs)
+- [Testes e cobertura](#testes-e-cobertura)
+- [Problemas comuns](#problemas-comuns)
 
-1. Crie o arquivo local de configuração. No PowerShell:
+## Início rápido
 
-   ```powershell
-   if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-   ```
+Você precisa apenas de **Docker com Docker Compose**, navegador e terminal. Execute os comandos na pasta que contém `compose.yaml`. No Windows, inicie o Docker Desktop antes de continuar; `docker info` deve responder normalmente.
 
-   No Bash, use `test -f .env || cp .env.example .env`. Se `.env` já existe, mantenha-o: ele pode conter a senha do banco usada por um volume PostgreSQL anterior.
+### 1. Configure o usuário e o banco
 
-2. Construa a imagem da API, necessária para gerar o hash e os segredos:
+Crie o arquivo local `.env` a partir do exemplo. Se ele já existe, mantenha-o: a senha pode estar vinculada a um volume PostgreSQL anterior.
 
-   ```sh
-   docker compose build api
-   ```
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+docker compose build api
+```
 
-3. Escolha a senha do usuário inicial. O comando pede a senha sem exibi-la e imprime somente o hash:
-
-   ```sh
-   docker compose run --rm --no-deps api python -c "from werkzeug.security import generate_password_hash; import getpass; print(generate_password_hash(getpass.getpass('Senha inicial: ')))"
-   ```
-
-   Abra `.env`, mantenha `INITIAL_USERNAME=admin` (ou escolha outro nome) e cole o hash em `INITIAL_PASSWORD_HASH` **entre aspas simples**. Exemplo: `INITIAL_PASSWORD_HASH='scrypt:...'`. As aspas impedem que o Compose interprete os caracteres `$` do hash. Guarde a senha digitada: é ela que você usará para entrar, não o hash.
-
-4. Gere um segredo para `SESSION_SECRET` e outro, **diferente**, para `POSTGRES_PASSWORD`. Execute o mesmo comando duas vezes e cole cada resultado na linha correspondente do `.env`:
-
-   ```sh
-   docker compose run --rm --no-deps api python -c "import secrets; print(secrets.token_hex(32))"
-   ```
-
-   Confira que os quatro campos de `.env` têm valores. Não coloque a senha inicial em texto puro no arquivo nem publique `.env`; ele é ignorado pelo Git.
-
-5. Inicie a página Web, a API, o banco e o contêiner da CLI com um único comando:
-
-   ```sh
-   docker compose up --build -d
-   docker compose ps
-   ```
-
-   `web`, `api`, `db` e `cli` devem estar em execução; `api` e `db` devem aparecer como `healthy`. Abra [http://localhost:8080](http://localhost:8080) e entre com `INITIAL_USERNAME` e a senha escolhida no passo 3. Para conferir a API, execute `docker compose exec web wget -qO- http://localhost/api/web/health`; o resultado esperado é `{"status":"ok"}`.
-
-Nas próximas vezes, use `docker compose up -d` para iniciar e `docker compose down` para parar. `down` preserva os registros no volume PostgreSQL. O usuário inicial é criado ou atualizado a cada inicialização da API; se você alterar `INITIAL_USERNAME` ou `INITIAL_PASSWORD_HASH`, execute `docker compose up -d` novamente.
-
-### Se não iniciar
-
-- Se `docker info` falhar, abra o Docker Desktop e aguarde o mecanismo de contêineres iniciar.
-- Se a API apresentar `password authentication failed for user "diariodev"`, o volume do banco já existia com outra senha. Reutilize o `POSTGRES_PASSWORD` antigo no `.env` se souber qual é. Se não souber, mantenha o banco em execução, entre com `docker compose exec db psql -U diariodev -d diariodev`, digite `\password diariodev`, informe duas vezes o valor atual de `POSTGRES_PASSWORD` do `.env` e saia com `\q`. Depois execute `docker compose up -d`. Isso preserva os registros.
-- Para ver o erro de inicialização, execute `docker compose logs --tail 50 db api`.
-
-## API Web
-
-| Método e rota | Acesso | Resultado |
-|---|---|---|
-| `GET /api/web/health` | Público | `200`, `{"status":"ok"}` |
-| `POST /api/web/login` | Público | Recebe JSON `{"username":"...","password":"..."}`; cria a sessão ou retorna `401` |
-| `GET /api/web/me` | Sessão | Retorna o usuário autenticado ou `401` |
-| `POST /api/web/logout` | Sessão | Encerra a sessão ou retorna `401` |
-| `POST /api/web/records` | Sessão | Cria um registro (`201`), ou retorna `400` com `errors` por campo / `401` |
-| `PUT /api/web/records/{id}` | Sessão | Edita um registro (`200`), ou retorna `400` / `401` / `404` |
-| `GET /api/web/records` | Sessão | Lista cinco registros por página, com ordenação; retorna `401` sem sessão |
-| `GET /api/web/records/search` | Sessão | Busca com filtros combináveis e paginação; retorna `400` para filtros inválidos e `401` sem sessão |
-| `DELETE /api/web/records/{id}` | Sessão | Exclui um registro (`204`), ou retorna `401` / `404` |
-| `PATCH /api/web/records/{id}/status` | Sessão | Recebe `{"status":"active"\|"inactive"}`; retorna o registro (`200`), `400` / `401` / `404` |
-
-O cookie da sessão é `HttpOnly` e `SameSite=Lax`. A página acessa a API pela mesma origem usando o proxy do Nginx. Rotas funcionais adicionadas nas próximas issues também deverão exigir sessão válida.
-
-Para verificar o healthcheck pelo contêiner Web:
+No Bash, use `test -f .env || cp .env.example .env` no primeiro comando. Gere o **hash** da senha inicial; o contêiner pedirá a senha sem exibi-la:
 
 ```sh
+docker compose run --rm --no-deps api python -c "from werkzeug.security import generate_password_hash; import getpass; print(generate_password_hash(getpass.getpass('Senha inicial: ')))"
+```
+
+Edite `.env`: escolha `INITIAL_USERNAME` (padrão: `admin`) e cole o resultado em `INITIAL_PASSWORD_HASH` **entre aspas simples**, por exemplo `INITIAL_PASSWORD_HASH='scrypt:...'`. As aspas preservam os caracteres `$` do hash.
+
+Gere **dois segredos diferentes** com o comando abaixo, executado duas vezes. Use um em `SESSION_SECRET` e outro em `POSTGRES_PASSWORD`:
+
+```sh
+docker compose run --rm --no-deps api python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Guarde a senha que você digitou, não o hash. Nunca publique `.env`, senhas ou tokens; `.env` é ignorado pelo Git.
+
+### 2. Inicie e entre
+
+```sh
+docker compose up --build -d
+docker compose ps
 docker compose exec web wget -qO- http://localhost/api/web/health
 ```
 
-## Cadastro e edição de registros (issue #2)
+`web`, `api`, `db` e `cli` devem estar em execução; `api` e `db` devem ficar `healthy`. O healthcheck deve retornar `{"status":"ok"}`. Abra [http://localhost:8080](http://localhost:8080) e entre com `INITIAL_USERNAME` e a **senha escolhida**, não o hash.
 
-Depois do login, a página exibe o formulário **Novo registro** com cinco campos, todos obrigatórios:
+Para iniciar novamente, use `docker compose up -d`. Para parar sem apagar os dados, use `docker compose down`. O volume `postgres_data` preserva os registros. Ao mudar o usuário ou o hash em `.env`, reinicie a API com `docker compose up -d --force-recreate api`.
 
-| Campo | Regra |
+## Usar a Web
+
+Depois do login, a aba **Estudos** mostra a tabela; **Dashboard** mostra os gráficos. A sessão usa cookie `HttpOnly` e `SameSite=Lax`. O Nginx serve `index.html` e encaminha `/api` à API na mesma origem.
+
+### #1 — Estrutura e login
+
+Entre na página com o usuário inicial. **Sair** encerra a sessão. Sem sessão válida, as rotas funcionais retornam `401`.
+
+### #2 — Cadastro e edição
+
+Clique em **Adicionar estudo** para abrir o formulário. Para editar, clique na linha e depois em **Editar estudo**, ou use o ícone de edição.
+
+### #3 — Listagem e exclusão
+
+A tabela mostra título, assunto, data e minutos, com **cinco itens por página**. Use as setas para navegar e o ícone de exclusão para apagar após confirmação.
+
+### #4 — Busca avançada
+
+Abra **Filtros**, combine autor, assunto e período e clique em **Aplicar**. **Limpar** volta à lista completa; ordenação e paginação continuam disponíveis.
+
+### #5 — Exportação CSV
+
+Clique em **Exportar CSV**. O arquivo inclui **todos** os registros dos filtros aplicados, inclusive os de outras páginas; sem filtros, inclui todos.
+
+### #6 — Dashboard
+
+A aba **Dashboard** mostra três gráficos com dados reais: registros por assunto, autor e mês. Os valores são carregados ao abrir/recarregar a aba.
+
+### #13 — Status
+
+No formulário de edição, use **Ativar/Desativar**. O estado `active` ou `inactive` fica salvo no banco.
+
+### #15 — Duplicação
+
+Use o ícone de duplicar na linha. A cópia recebe outro ID e o usuário logado como autor; o original permanece intacto.
+
+A linha também abre uma visualização do estudo com resumo, data, duração e status. As ações da tabela ficam na última coluna.
+
+### Campos e filtros
+
+| Campo do estudo | Regra |
 |---|---|
-| `title` (Título) | Texto, até 120 caracteres |
-| `topic` (Assunto) | Texto, até 60 caracteres |
-| `summary` (Resumo) | Texto, até 1000 caracteres |
-| `study_date` (Data do estudo) | Data válida `AAAA-MM-DD` |
-| `minutes` (Minutos estudados) | Inteiro de 0 a 1440 |
+| Título (`title`) | Obrigatório, até 120 caracteres |
+| Assunto (`topic`) | Obrigatório, até 60 caracteres |
+| Resumo (`summary`) | Obrigatório, até 1000 caracteres |
+| Data do estudo (`study_date`) | Obrigatória, data válida `AAAA-MM-DD` |
+| Minutos (`minutes`) | Obrigatório, inteiro de 0 a 1440 |
 
-Campos inválidos recebem uma mensagem de erro abaixo do próprio campo. A validação ocorre no navegador e novamente na API (`400` com `{"errors": {"campo": "mensagem"}}`). Ao salvar, `POST /api/web/records` grava o registro no PostgreSQL e o formulário passa para o modo **Editar registro #id**: **Salvar alterações** usa `PUT /api/web/records/{id}`. **Novo registro** limpa o formulário. Os dados persistem no volume `postgres_data`.
+A página e a API validam os campos; erros aparecem junto ao formulário. O autor é o usuário autenticado e a categoria dos filtros é o `topic`. Registros anteriores à coluna `author` receberam o usuário inicial quando essa coluna foi criada.
 
-Exemplo pelo terminal (com a sessão de login em `cookies.txt`):
+Os filtros de busca podem ser combinados: `author` corresponde ao nome completo sem diferenciar maiúsculas; `category` procura um trecho literal do assunto sem diferenciar maiúsculas; `date_from` e `date_to` são datas inclusivas. Datas podem ser usadas separadamente; um período invertido retorna `400`. A ordenação aceita `study_date`, `title`, `topic` ou `minutes`, com direção `asc` ou `desc`. Empates usam o ID decrescente.
 
-```sh
-curl -c cookies.txt -H 'Content-Type: application/json' -d '{"username":"admin","password":"SUA_SENHA"}' http://localhost:8080/api/web/login
-curl -b cookies.txt -H 'Content-Type: application/json' -d '{"title":"Git","topic":"Worktree","summary":"Estudo","study_date":"2026-11-15","minutes":30}' http://localhost:8080/api/web/records
-```
+O CSV usa UTF-8 com BOM, vírgulas e o cabeçalho `id,title,topic,summary,study_date,minutes,status`. Preserva os filtros e a ordenação **já aplicados**; editar os campos sem clicar em **Aplicar** ainda não muda o arquivo. Inclui registros ativos e inativos. Sem resultados, contém apenas o cabeçalho.
 
-Logs: a API registra `create` e `update` (sucesso, validação, não encontrado e falha) e `db.py` registra `insert` e `update`, com o mesmo `request_id`.
+O Dashboard conta até dez assuntos e dez autores (maiores totais, desempate alfabético) e os 12 meses mais recentes com registros (exibidos em ordem cronológica). Sem dados, os gráficos mostram uma mensagem de vazio.
 
-## Listagem e exclusão na Web (issue #3)
+## Usar a CLI
 
-Ao entrar ou recarregar a página com uma sessão válida, a tabela busca os registros no banco e mostra **título, assunto, data do estudo e minutos estudados**. Cada página tem cinco itens. Os controles permitem ordenar por qualquer um desses campos em ordem crescente ou decrescente e navegar entre páginas. Em empates, o ID decrescente mantém uma ordem estável.
-
-Selecione um registro pela primeira coluna e clique em **Excluir selecionado**. Após a confirmação, a página chama `DELETE /api/web/records/{id}` e atualiza a tabela. O formulário de cadastro/edição também atualiza a tabela após salvar. Se o último item de uma página for excluído, a página volta para a anterior.
-
-`GET /api/web/records` aceita `page` (inteiro a partir de 1), `sort` (`study_date`, `title`, `topic` ou `minutes`) e `direction` (`asc` ou `desc`). Os padrões são `page=1`, `sort=study_date` e `direction=desc`. A resposta contém `items`, `page`, `page_size`, `total` e `total_pages`; parâmetros inválidos retornam `400`. O registro inexistente retorna `404` na exclusão. Listagem e exclusão exigem login e geram logs JSON correlacionados nas camadas API e banco.
-
-## Duplicação na Web (issue #15)
-
-Selecione um registro na tabela e clique em **Duplicar selecionado**. A página chama `POST /api/web/records/{id}/duplicate`, que cria no PostgreSQL uma **cópia com ID próprio** (título, assunto, resumo, data do estudo, minutos e status iguais aos do original; o autor da cópia é o usuário logado). O registro original **não é alterado**. A tabela é recarregada e a mensagem informa o ID da cópia (por exemplo, `Registro duplicado como #12.`).
-
-| Método e rota | Acesso | Resultado |
-|---|---|---|
-| `POST /api/web/records/{id}/duplicate` | Sessão | Cria a cópia e retorna o novo registro (`201`); `404` se o ID não existe, `401` sem sessão |
-
-Exemplo pelo terminal (com a sessão de login em `cookies.txt`):
+O `docker compose up -d` também inicia o contêiner `cli`. Confira a ajuda e a conexão com a API:
 
 ```sh
-curl -b cookies.txt -X POST http://localhost:8080/api/web/records/1/duplicate
+docker compose exec cli python cli.py --help
+docker compose exec cli python cli.py health
 ```
 
-Logs: a API registra `duplicate` e `db.py` registra `duplicate`, com o mesmo `request_id`.
+O healthcheck da CLI responde `API da CLI saudável.`.
 
-## Busca avançada na Web (issue #4)
-
-Após o login, use os filtros **Autor**, **Categoria (assunto)** e **período** (De/Até) acima da tabela. Clique em **Buscar** para atualizar os resultados sem recarregar a página. Os filtros podem ser combinados; **Limpar filtros** volta à listagem completa. A ordenação e a paginação de cinco itens continuam funcionando nos resultados filtrados.
-
-`GET /api/web/records/search` aceita `author` (nome do usuário que criou o registro, sem diferenciar maiúsculas), `category` (trecho do campo `topic`, sem diferenciar maiúsculas), `date_from` e `date_to` (datas inclusivas em `AAAA-MM-DD`). Também aceita `page`, `sort` e `direction` com as mesmas regras da listagem. A resposta tem `items`, `page`, `page_size`, `total` e `total_pages`. Datas inválidas, período invertido, paginação ou ordenação inválida retornam `400`; sem sessão, retorna `401`.
-
-O banco adiciona a coluna `author` aos registros existentes ao iniciar: registros antigos recebem o usuário inicial configurado naquele momento. Novos registros criados pela Web ou CLI recebem automaticamente o usuário autenticado, sem campo extra no formulário ou comando. A categoria usa o campo `topic` já existente. A busca tem consulta SQL própria, combina os filtros com `AND` e registra leituras tanto na API quanto no banco com o mesmo `request_id`.
-
-## Rodar a CLI
-
-O `docker compose up -d` inicia o contêiner `cli` junto com Web, API e banco. Ele fica pronto para receber comandos; você não precisa executar `docker compose run` antes. Na pasta do projeto:
-
-1. Confira os comandos disponíveis e a conexão com a API:
-
-   ```sh
-   docker compose exec cli python cli.py --help
-   docker compose exec cli python cli.py health
-   ```
-
-   O segundo comando deve responder `API da CLI saudável.`.
-
-2. Gere um token com o usuário inicial:
-
-   ```sh
-   docker compose exec cli python cli.py token --username admin
-   ```
-
-   Troque `admin` se você mudou `INITIAL_USERNAME` no `.env`. Quando aparecer `Senha:`, digite **a senha escolhida ao gerar o hash**, não o hash. A CLI mostrará um token; copie-o inteiro.
-
-3. No PowerShell, guarde o token só nesta sessão do terminal e confirme o login:
-
-   ```powershell
-   $env:DIARIODEV_TOKEN = (Read-Host 'Cole o token exibido pela CLI').Trim()
-   docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py me
-   ```
-
-   O resultado esperado é `Usuário: admin` (ou o nome configurado). No Bash, use `export DIARIODEV_TOKEN='TOKEN_REAL'` e depois `docker compose exec -e DIARIODEV_TOKEN="$DIARIODEV_TOKEN" cli python cli.py me`.
-
-O token vence após uma hora; execute o passo 2 novamente para renová-lo. Não publique o token. A CLI oferece `health`, `token`, `me`, `create`, `edit`, `list`, `search` e `delete`. Uma senha incorreta retorna `HTTP 401: Invalid credentials`; um token ausente ou inválido retorna `HTTP 401: Unauthorized`.
-
-Para automações, `docker compose exec -T cli python cli.py token --username admin --password-stdin` lê a senha pela entrada padrão sem mostrá-la nos argumentos do processo.
-
-| Método e rota | Acesso | Resultado |
-|---|---|---|
-| `GET /api/cli/health` | Público | `200`, `{"status":"ok"}` |
-| `POST /api/cli/token` | Público | Recebe usuário e senha em JSON; retorna `token`, `token_type` e `expires_in`, ou `401` |
-| `GET /api/cli/me` | Bearer token | Retorna o usuário autenticado ou `401` |
-
-Os endpoints CLI são separados dos endpoints Web. O token é assinado com `SESSION_SECRET` e não é registrado nos logs. Os comandos `create` e `edit` usam essa autenticação.
-
-
-## Criar e editar registros pela CLI (issue #8)
-
-Com um token válido em `$env:DIARIODEV_TOKEN` no PowerShell (veja a seção anterior), use `create` com os mesmos cinco campos do formulário Web. O comando mostra o ID gerado:
-
-```powershell
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py create --title "Git" --topic "Worktree" --summary "Estudei branches isoladas" --study-date 2026-11-15 --minutes 30
-```
-
-Use o ID retornado para editar o registro. `edit` recebe o registro inteiro, portanto informe novamente os cinco campos, inclusive os que não mudaram:
-
-```powershell
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py edit 1 --title "Git" --topic "Worktree" --summary "Pratiquei git worktree" --study-date 2026-11-15 --minutes 45
-```
-
-No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"` no lugar de `-e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN`. Para ver as opções, execute `docker compose exec cli python cli.py create --help` ou `docker compose exec cli python cli.py edit --help`. `title`, `topic` e `summary` não podem ficar vazios e têm limites de 120, 60 e 1000 caracteres; `study_date` deve ser uma data válida `AAAA-MM-DD`; `minutes` deve ser um inteiro entre 0 e 1440. A API aplica a **mesma validação da Web**, remove espaços nas pontas dos textos e devolve `400` com erros por campo. A CLI exibe esses erros no terminal e sai com código 1. ID inexistente retorna `404`; sem token válido, `401`.
-
-| Método e rota | Acesso | Resultado |
-|---|---|---|
-| `POST /api/cli/records` | Bearer token | Cria no PostgreSQL e retorna o registro com ID (`201`) |
-| `PUT /api/cli/records/{id}` | Bearer token | Atualiza o mesmo registro e retorna seus dados (`200`); ID inexistente retorna `404` |
-
-A CLI chama apenas esses endpoints REST. A API usa `db.py` para gravar na mesma tabela `records` utilizada pela Web. Os registros criados ou editados pela CLI aparecem na listagem Web ao abrir ou atualizar a página. Para conferir os logs correlacionados de API e banco, execute `docker compose logs -f api`: eventos `create`/`update` na camada `api` e `insert`/`update` na camada `db` compartilham `request_id` e usam `client: "cli"`.
-
-
-## Listar e excluir registros pela CLI (issue #9)
-
-Com um token válido em `$env:DIARIODEV_TOKEN` (veja "Rodar a CLI"), liste os registros com paginação e ordenação:
-
-```powershell
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py list
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py list --page 2 --page-size 3 --sort title --direction asc
-```
-
-| Opção | Valores | Padrão |
-|---|---|---|
-| `--page` | inteiro a partir de 1 | `1` |
-| `--page-size` | de 1 a 50 | `5` |
-| `--sort` | `study_date`, `title`, `topic` ou `minutes` | `study_date` |
-| `--direction` | `asc` ou `desc` | `desc` |
-
-Cada linha mostra `#id | data | título | assunto | minutos`, e a última informa a página atual, o total de páginas e o total de registros. Em empates, o ID decrescente mantém a ordem estável, como na Web.
-
-Para excluir, informe o identificador mostrado na listagem:
-
-```powershell
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py delete 3
-```
-
-A CLI responde `Registro #3 excluído.`. Um ID inexistente retorna `HTTP 404: Record not found` e parâmetros inválidos retornam `HTTP 400`; sem token válido, `HTTP 401`. No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"`. Como a CLI e a Web usam a mesma tabela `records`, o que for listado ou excluído pela CLI aparece (ou some) na tabela Web ao recarregar a página.
-
-| Método e rota | Acesso | Resultado |
-|---|---|---|
-| `GET /api/cli/records` | Bearer token | Recebe `page`, `page_size`, `sort` e `direction`; retorna `items`, `page`, `page_size`, `total` e `total_pages` (`200`), ou `400` / `401` |
-| `DELETE /api/cli/records/{id}` | Bearer token | Exclui o registro e retorna `{"id": id, "deleted": true}` (`200`); `404` se não existir, `401` sem token |
-
-A CLI chama apenas esses endpoints REST, que usam as consultas próprias `list_records_cli` e `delete_record_cli` de `db.py`. Os logs saem com `client: "cli"`, operações `list` e `delete`, e a mesma `request_id` nas camadas `api` e `db`: consulte com `docker compose logs -f api`.
-
-## Busca avançada pela CLI (issue #10)
-
-Com um token válido em `$env:DIARIODEV_TOKEN` (veja "Rodar a CLI"), use `search` com os mesmos filtros da busca Web. Todos os filtros são opcionais e **combináveis** (condição `AND`):
-
-```powershell
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py search --category git
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py search --author admin --category git --date-from 2026-11-01 --date-to 2026-11-30 --sort title --direction asc
-```
-
-| Opção | Significado | Padrão |
-|---|---|---|
-| `--author` | Usuário que criou o registro, sem diferenciar maiúsculas | sem filtro |
-| `--category` | Trecho do assunto (`topic`), sem diferenciar maiúsculas | sem filtro |
-| `--date-from` / `--date-to` | Período do estudo, datas inclusivas `AAAA-MM-DD` | sem filtro |
-| `--page`, `--page-size` | Página (a partir de 1) e itens por página (1 a 50) | `1` e `5` |
-| `--sort`, `--direction` | `study_date`, `title`, `topic` ou `minutes`; `asc` ou `desc` | `study_date` e `desc` |
-
-A saída tem o mesmo formato de `list`: uma linha `#id | data | título | assunto | minutos` por registro e, no fim, a página, o total de páginas e o total de registros. **Os mesmos parâmetros produzem os mesmos resultados da busca Web**, pois ambas usam as mesmas regras de filtro, ordenação e desempate por ID; a Web usa sempre cinco itens por página, igual ao padrão da CLI. Data inválida, período invertido (`--date-from` depois de `--date-to`), página ou ordenação inválidas retornam `HTTP 400`; sem token válido, `HTTP 401`. No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"`.
-
-| Método e rota | Acesso | Resultado |
-|---|---|---|
-| `GET /api/cli/records/search` | Bearer token | Recebe `author`, `category`, `date_from`, `date_to`, `page`, `page_size`, `sort` e `direction`; retorna `items`, `page`, `page_size`, `total` e `total_pages` (`200`), ou `400` / `401` |
-
-A CLI chama apenas esse endpoint, que usa a consulta própria `search_records_cli` de `db.py`, separada da consulta da Web. Os logs saem com `client: "cli"` e operação `search` nas camadas `api` e `db`, com a mesma `request_id`; consulte com `docker compose logs -f api`.
-
-## Dashboard Web (issue #6)
-
-Depois do login, a página mostra o **Dashboard** com três gráficos de barras, calculados com os registros reais do PostgreSQL. Os valores são lidos de `GET /api/web/dashboard` ao abrir ou recarregar a página e também são atualizados depois de salvar, duplicar ou excluir um registro. Passe o mouse sobre uma barra para ver o rótulo e o total.
-
-| Gráfico | O que conta | Regras |
-|---|---|---|
-| **Registros por categoria** | Número de registros de cada assunto (`topic`) | As 10 categorias com mais registros; empates em ordem alfabética |
-| **Registros por autor** | Número de registros de cada autor (usuário que criou o registro) | Os 10 autores com mais registros; empates em ordem alfabética |
-| **Registros por mês** | Número de registros por mês da data do estudo (`study_date`, formato `AAAA-MM`) | Os 12 meses mais recentes que têm registros, exibidos em ordem cronológica |
-
-Sem registros, cada gráfico mostra "Ainda não há registros.". Os gráficos são desenhados em SVG dentro de `index.html`, sem biblioteca externa nem acesso à internet.
-
-`GET /api/web/dashboard` exige login e retorna `200` com `by_category`, `by_author` e `by_month`, cada um com uma lista de objetos `{"label": "...", "total": N}`; sem sessão, retorna `401`, e falha no banco retorna `503`. A consulta tem SQL próprio em `db.py` (`dashboard_web`) e gera logs JSON com `client: "web"` e operação `dashboard`, com o mesmo `request_id` nas camadas `api` e `db`.
-
-Para conferir sem a página, com a sessão de login em `cookies.txt` (veja "Cadastro e edição de registros"):
+### #7 — Obter e usar o token
 
 ```sh
-curl -b cookies.txt http://localhost:8080/api/web/dashboard
+docker compose exec cli python cli.py token --username admin
 ```
 
-## Indicadores pela CLI (issue #12)
-
-Com um token válido em `$env:DIARIODEV_TOKEN` (veja "Rodar a CLI"), consulte os mesmos três conjuntos de valores do Dashboard Web:
+Use o `INITIAL_USERNAME` configurado se for diferente de `admin`. Digite a **senha escolhida** quando a CLI pedir; ela imprimirá um token válido por uma hora. Guarde-o somente na sessão do terminal:
 
 ```powershell
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py dashboard
+$env:DIARIODEV_TOKEN = (Read-Host 'Cole o token').Trim()
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py me
 ```
 
-A saída mostra as contagens **por categoria, autor e mês** em texto. Por exemplo:
+No Bash: `export DIARIODEV_TOKEN='TOKEN'` e depois o mesmo comando `docker compose exec -e DIARIODEV_TOKEN cli python cli.py me`. O Compose repassa a variável do host ao contêiner. O resultado esperado é `Usuário: admin` (ou seu usuário). Renove o token executando `token` novamente. Para automação, `token --username admin --password-stdin` lê a senha da entrada padrão sem colocá-la nos argumentos do processo. Não publique o token.
 
-```text
-Por categoria:
-  Git: 3
-Por autor:
-  student: 3
-Por mês:
-  2026-11: 3
-```
+Nos exemplos abaixo, `-e DIARIODEV_TOKEN` pressupõe que você já definiu essa variável no terminal.
 
-Quando não houver registros em um conjunto, a CLI mostra `(sem dados)`. No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"`.
+### Comandos de registros
 
-`GET /api/cli/dashboard` exige Bearer token e devolve `200` com `by_category`, `by_author` e `by_month`, no mesmo formato e com as mesmas regras de limite e ordenação de `GET /api/web/dashboard`. Sem token válido, retorna `401`; se o banco falhar, retorna `503`. A CLI chama somente o endpoint `/api/cli/dashboard`, cuja consulta SQL própria (`dashboard_cli` em `db.py`) lê os registros no PostgreSQL. Os logs JSON da API e do banco usam `client: "cli"`, operação `dashboard` e a mesma `request_id`; consulte com `docker compose logs -f api`.
-
-## Status do registro na Web (issue #13)
-
-Todo registro tem um status `active` (padrão) ou `inactive`, salvo na coluna `records.status` (adicionada automaticamente na inicialização da API). Ao editar um registro, a página mostra o status atual e o botão **Ativar/Desativar**, que chama `PATCH /api/web/records/{id}/status` e persiste a mudança no PostgreSQL. As respostas de registros incluem o campo `status`.
-
-```sh
-curl -b cookies.txt -X PATCH -H 'Content-Type: application/json' -d '{"status":"inactive"}' http://localhost:8080/api/web/records/1/status
-```
-
-Logs: a API registra `status` e `db.py` registra `update_status`, com o mesmo `request_id`.
-
-## Status do registro pela CLI (issue #14)
-
-Com um token válido em `$env:DIARIODEV_TOKEN` (veja "Rodar a CLI"), ative ou desative um registro informando o identificador mostrado em `list` e o novo status (`active` ou `inactive`):
+Use um registro de exemplo para preparar dados e conferir a Web:
 
 ```powershell
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py status 3 inactive
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py status 3 active
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py create --title "Git" --topic "Worktree" --summary "Estudei branches isoladas" --study-date 2026-11-15 --minutes 30
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py list
 ```
 
-A CLI responde `Registro #3: inativo.` ou `Registro #3: ativo.`. Um ID inexistente retorna `HTTP 404: Record not found`; sem token válido, `HTTP 401`; um status diferente de `active` e `inactive` é recusado pela própria CLI (ou com `400` pela API). No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"`. O status fica salvo em `records.status`, a mesma coluna da Web: ao recarregar a página e abrir o registro em **Editar**, ele aparece como **Ativo** ou **Inativo**.
+### #8 — Criar e editar
 
-| Método e rota | Acesso | Resultado |
+`create` usa os cinco campos obrigatórios. `edit ID` recebe **novamente todos os cinco campos** e atualiza o registro. Os mesmos dados aparecem na Web.
+
+### #9 — Listar e excluir
+
+`list` mostra `#id | data | título | assunto | minutos` e a paginação; `delete ID` exclui pelo identificador. A Web reflete a alteração ao recarregar.
+
+### #10 — Busca avançada
+
+`search` combina `--author`, `--category`, `--date-from` e `--date-to`. Com os mesmos parâmetros, os resultados equivalem à busca Web.
+
+### #11 — Exportação CSV
+
+`export` grava **todos** os resultados filtrados, sem limitar à página atual, em `/app/registros.csv` dentro do contêiner.
+
+### #12 — Indicadores
+
+`dashboard` mostra em texto as contagens por categoria, autor e mês, com os mesmos valores do Dashboard Web.
+
+### #14 — Status
+
+`status ID active` ou `status ID inactive` salva o novo estado; ele aparece na Web.
+
+### #16 — Duplicação
+
+`duplicate ID` cria uma cópia com novo ID e autor do token, preservando todos os dados do original.
+
+Exemplos de cada operação:
+
+```powershell
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py edit 1 --title "Git" --topic "Worktree" --summary "Pratiquei git worktree" --study-date 2026-11-15 --minutes 45
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py list --page 2 --page-size 3 --sort title --direction asc
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py search --author admin --category Git --date-from 2026-11-01 --date-to 2026-11-30
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py export --category Git --output filtrados.csv
+docker compose cp cli:/app/filtrados.csv ./filtrados.csv
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py dashboard
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py status 1 inactive
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py duplicate 1
+docker compose exec -e DIARIODEV_TOKEN cli python cli.py delete 1
+```
+
+`list` e `search` aceitam `--page` (padrão 1), `--page-size` (1 a 50; padrão 5), `--sort` (`study_date`, `title`, `topic` ou `minutes`) e `--direction` (`asc` ou `desc`). `search` e `export` aceitam os quatro filtros; `export` aceita também ordenação e `--output` (padrão `registros.csv`). Use `docker compose exec cli python cli.py COMANDO --help` para ver cada opção. A CLI chama somente endpoints REST próprios, sem acessar o banco diretamente.
+
+Parâmetros inválidos retornam `400`; ID inexistente, `404`; credenciais ou token inválidos, `401`; falha no banco, `503`. O comando sai com código 1 e imprime o erro. A senha inicial é armazenada somente como hash no banco.
+
+## API e dados
+
+A API Flask e o PostgreSQL são compartilhados pela Web e CLI. As rotas funcionais são separadas por cliente, têm autenticação própria e consultas SQL próprias em `db.py`. A tabela `users` guarda o usuário inicial e o hash; `records` guarda os cinco campos do estudo, autor e status. Os dados persistem no volume `postgres_data`.
+
+| Operação | Rota Web (sessão) | Rota CLI (Bearer token) |
 |---|---|---|
-| `PATCH /api/cli/records/{id}/status` | Bearer token | Recebe `{"status":"active"\|"inactive"}`; retorna o registro (`200`), `400` / `401` / `404` |
+| Healthcheck público | `GET /api/web/health` | `GET /api/cli/health` |
+| Autenticação | `POST /api/web/login`, `GET /api/web/me`, `POST /api/web/logout` | `POST /api/cli/token`, `GET /api/cli/me` |
+| Listar | `GET /api/web/records` | `GET /api/cli/records` |
+| Criar | `POST /api/web/records` | `POST /api/cli/records` |
+| Editar | `PUT /api/web/records/{id}` | `PUT /api/cli/records/{id}` |
+| Excluir | `DELETE /api/web/records/{id}` | `DELETE /api/cli/records/{id}` |
+| Buscar | `GET /api/web/records/search` | `GET /api/cli/records/search` |
+| Exportar CSV | `GET /api/web/records/export` | `GET /api/cli/records/export` |
+| Indicadores | `GET /api/web/dashboard` | `GET /api/cli/dashboard` |
+| Alterar status | `PATCH /api/web/records/{id}/status` | `PATCH /api/cli/records/{id}/status` |
+| Duplicar | `POST /api/web/records/{id}/duplicate` | `POST /api/cli/records/{id}/duplicate` |
 
-A CLI chama apenas esse endpoint REST, que usa a consulta própria `update_status_cli` de `db.py` (separada da consulta Web). Os logs saem com `client: "cli"`, operação `status` na camada `api` e `update_status` na camada `db`, com a mesma `request_id`: consulte com `docker compose logs -f api`.
+`{id}` é o identificador do registro. O login Web recebe `{"username":"...","password":"..."}` e cria uma sessão; o token CLI recebe as mesmas credenciais e retorna `token`, `token_type` e `expires_in`. Todas as operações funcionais exigem credencial válida e respondem **HTTP 401** em caso contrário. Healthchecks são públicos. As respostas de listagem e busca contêm `items`, `page`, `page_size`, `total` e `total_pages`; a exportação retorna `text/csv`; os indicadores retornam `by_category`, `by_author` e `by_month`, cada um com objetos `{"label":"...","total":N}`.
 
+## Logs
 
-## Exportação CSV pela Web (issue #5)
-
-Após entrar, vá até **Seus registros**, aplique os filtros com **Buscar** e clique
-em **Exportar CSV**. O navegador baixa `registros.csv` com todos os resultados da
-busca, inclusive os que estão em outras páginas. A seleção de uma linha e a página
-atual não limitam o arquivo. **Limpar filtros** volta a exportar todos os registros,
-tanto ativos quanto inativos. A exportação usa os últimos filtros aplicados com
-**Buscar**; editar os campos sem buscar ainda não altera os resultados exportados.
-
-O endpoint protegido `GET /api/web/records/export` usa os mesmos filtros da
-busca da issue #4, combinados com **E**:
-
-| Parâmetro | Significado |
-|---|---|
-| `author` | Nome completo do usuário autor, sem diferenciar maiúsculas/minúsculas |
-| `category` | Trecho literal do assunto (`topic`), sem diferenciar maiúsculas/minúsculas |
-| `date_from` | Data inicial inclusiva do estudo, `AAAA-MM-DD` |
-| `date_to` | Data final inclusiva do estudo, `AAAA-MM-DD` |
-| `sort` | `study_date` (padrão), `title`, `topic` ou `minutes` |
-| `direction` | `desc` (padrão) ou `asc` |
-
-As datas também podem ser usadas separadamente. `%` e `_` não são curingas.
-A ordenação da listagem é preservada. `page`, `page_size`, `limit` e `offset` são
-aceitos e ignorados; a consulta SQL própria de exportação em `db.py` nunca aplica
-`LIMIT`/`OFFSET`. Ela não reutiliza a consulta paginada da busca.
-
-Sem sessão válida, retorna `401`. Datas inválidas, intervalo invertido, ordenação
-inválida ou parâmetros desconhecidos retornam `400` com `errors`. Falha no banco
-retorna `503` e a página exibe uma mensagem sem baixar um arquivo de erro.
-
-O sucesso retorna `200`, `Content-Type: text/csv; charset=utf-8` e
-`Content-Disposition: attachment; filename="registros.csv"`. O CSV usa vírgula,
-cabeçalho `id,title,topic,summary,study_date,minutes,status`, datas ISO e UTF-8 com
-BOM para preservar acentos em planilhas. Aspas, vírgulas e quebras de linha são
-escapadas pelo formato CSV. Sem resultados, retorna apenas o cabeçalho.
-API e banco registram `export` com o mesmo `request_id`; consulte com
-`docker compose logs -f api`.
-
-Para conferir na Web, crie mais de cinco registros correspondentes aos mesmos
-filtros, aplique a busca, vá para a segunda página e exporte: o arquivo deve conter
-todos os resultados. Limpe os filtros e exporte todos os registros. Confira também
-uma busca sem resultados e uma tentativa sem sessão.
-
-Além dos testes unitários abaixo, `tests/test_export_integration.py` verifica a
-rota e o SQL com PostgreSQL real, criando e removendo somente um schema temporário
-próprio, sem alterar os registros da aplicação. Com o banco em execução, rode:
-
-```sh
-docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_export_integration.py'], check=True)"
-```
-
-Os testes de integração criam registros temporários, comparam o CSV com todas as
-páginas da busca e verificam filtros combinados, datas, caracteres especiais e a
-criação pela CLI após a migração de autor. Sem `TEST_DATABASE_URL`, são pulados
-na execução unitária. A criação pela CLI grava o autor do token conforme a
-implementação da #4, mantendo a compatibilidade com a coluna obrigatória.
-
-Esta entrega corresponde à **PR 2 do ciclo 3 (issue #5)** e usa a busca avançada
-da **issue #4 / PR #23**, já integrada ao `main`. A PR de exportação contém apenas
-as alterações da #5 e exige a aprovação de todos os colegas antes da integração.
-
-## Exportação CSV pela CLI (issue #11)
-
-Com um token válido em `$env:DIARIODEV_TOKEN` (veja "Rodar a CLI"), o comando `export` baixa **todos** os registros que correspondem aos filtros, sem paginação, e grava o arquivo **dentro do contêiner `cli`** (padrão: `/app/registros.csv`). Os filtros são os mesmos da busca da CLI (issue #10) e da Web, combinados com **E**:
-
-```powershell
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py export
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py export --author admin --category Git --date-from 2026-11-01 --date-to 2026-11-30 --sort title --direction asc --output filtrados.csv
-```
-
-| Opção | Significado | Padrão |
-|---|---|---|
-| `--author` | Nome completo do autor, sem diferenciar maiúsculas | todos |
-| `--category` | Trecho do assunto (`topic`), sem diferenciar maiúsculas | todos |
-| `--date-from` / `--date-to` | Datas inclusivas `AAAA-MM-DD` (podem ser usadas separadamente) | sem limite |
-| `--sort` | `study_date`, `title`, `topic` ou `minutes` | `study_date` |
-| `--direction` | `asc` ou `desc` | `desc` |
-| `--output` | Arquivo CSV a gravar no contêiner | `registros.csv` |
-
-A CLI responde, por exemplo, `12 registros exportados para registros.csv.`. Sem filtros, exporta todos os registros (ativos e inativos).
-
-**Onde acessar o arquivo:** ele fica no contêiner, em `/app/<arquivo>`. Copie-o para a pasta do projeto no seu computador com o Compose e abra no Excel ou em um editor:
-
-```powershell
-docker compose cp cli:/app/registros.csv ./registros.csv
-```
-
-(Com `--output filtrados.csv`, use `cli:/app/filtrados.csv`.) No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"` no lugar de `-e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN`. O CSV usa vírgula, cabeçalho `id,title,topic,summary,study_date,minutes,status`, datas ISO e UTF-8 com BOM; sem resultados, contém só o cabeçalho. Datas inválidas, intervalo invertido ou ordenação inválida retornam `HTTP 400` com a mensagem por campo; sem token válido, `HTTP 401`; falha no banco, `HTTP 503`.
-
-| Método e rota | Acesso | Resultado |
-|---|---|---|
-| `GET /api/cli/records/export` | Bearer token | Aceita `author`, `category`, `date_from`, `date_to`, `sort` e `direction`; retorna `text/csv` (`200`), ou `400` / `401` / `503` |
-
-A CLI chama apenas esse endpoint REST, que usa a consulta própria `export_records_cli` de `db.py` (separada da consulta de exportação Web e sem `LIMIT`/`OFFSET`). Os logs saem com `client: "cli"`, operação `export` nas camadas `api` e `db`, com a mesma `request_id`: consulte com `docker compose logs -f api`.
-
-## Duplicar registros pela CLI (issue #16)
-
-Com os serviços iniciados e um token válido em `$env:DIARIODEV_TOKEN` (veja
-"Rodar a CLI"), informe o ID mostrado em `list`:
-
-```powershell
-docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py duplicate 3
-```
-
-Exemplo de resposta: `Registro #3 duplicado. Novo registro: #4.`. O novo ID é
-gerado pelo banco e pode ter outro valor. Para consultar a ajuda:
-`docker compose exec cli python cli.py duplicate --help`. No Bash, use
-`-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"`.
-
-| Método e rota | Acesso | Resultado |
-|---|---|---|
-| `POST /api/cli/records/{id}/duplicate` | Bearer token | Retorna a cópia com ID próprio (`201`); `401` sem token válido, `404` para registro inexistente e `503` se o banco falhar |
-
-O comando não recebe os campos novamente nem acessa o banco diretamente. A API
-usa a consulta SQL própria `duplicate_record_cli` em `db.py`: um único
-`INSERT ... SELECT` copia título, assunto, resumo, data, minutos e status
-(`active` ou `inactive`). Assim como na duplicação Web, a cópia recebe como autor
-o usuário autenticado e uma nova data de criação. O registro original permanece
-intacto, inclusive autor, status e data de criação. Cada execução cria uma nova
-cópia; o comando não repete a requisição automaticamente.
-
-Para conferir, liste os registros, execute `duplicate` com um ID existente e
-recarregue a Web. A tabela deve mostrar o original e a cópia com IDs diferentes.
-Se houver mais de cinco registros, use a paginação ou os filtros. A API e o banco
-registram `duplicate`, com `client: "cli"` e o mesmo `request_id`, inclusive
-falhas. Consulte com `docker compose logs -f api`.
-
-Os testes unitários da CLI, API e banco integram a suíte completa:
-
-```sh
-docker compose run --rm --no-deps --build tests
-```
-
-`tests/test_duplicate_integration.py` também verifica o comando real da CLI por
-HTTP com PostgreSQL, a visibilidade na listagem Web, os dois status, duplicações
-sucessivas, ID inexistente e a preservação de todos os dados do original. Usa um
-schema temporário próprio, removido ao final, e não altera registros existentes.
-Com o banco em execução, rode:
-
-```sh
-docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_duplicate_integration.py'], check=True)"
-```
-
-Sem `TEST_DATABASE_URL`, esses testes de integração são pulados na execução
-unitária. A issue #16 é desenvolvida em uma worktree exclusiva, na branch
-`codex/issue-16-cli-duplicate`, criada sobre o `main` atualizado até `cf7e7d0`.
-
-## Banco e logs
-
-PostgreSQL mantém os dados no volume `postgres_data`. A tabela `users` guarda o usuário inicial e seu hash. A tabela `records` guarda título, assunto, resumo, data de estudo e minutos estudados.
-
-As operações Web e CLI emitem uma linha JSON por evento no stdout. A API registra healthchecks, inicialização e tentativas de autenticação; `db.py` registra inicialização e consultas de usuário, inclusive falhas. Eventos da API e do banco na mesma requisição têm o mesmo `request_id` e identificam `client` como `web` ou `cli`. Senhas, hashes, tokens, payloads e SQL não aparecem nos logs.
+Acompanhe os eventos JSON da API e do acesso ao banco (inclusive leituras):
 
 ```sh
 docker compose logs -f api
 ```
 
+Cada linha contém `timestamp` (UTC ISO 8601), `level` (`INFO`/`WARN`/`ERROR`), `layer` (`api`/`db`), `client` (`web`/`cli`), `operation`, `status` (`success`/`error`), `request_id` e `message`. Uma operação que acessa o banco emite eventos nas duas camadas com o **mesmo `request_id`**. Sucessos e falhas de autenticação são registrados sem senhas, hashes, tokens, payloads completos ou SQL.
+
+Para conferir a correlação, crie um estudo na Web, execute `list` na CLI e procure no log os pares de eventos com o mesmo `request_id` em cada requisição.
+
 ## Testes e cobertura
 
-Os testes unitários rodam em contêiner e exigem 100% de cobertura de linhas em `cli.py`, `api.py` e `db.py`:
+Os testes unitários e a medição de cobertura rodam **somente pelo Compose**:
 
 ```sh
 docker compose run --rm --no-deps --build tests
 ```
 
-A suíte deve passar com **100% de cobertura**. Para consultar os logs JSON da API e do acesso ao banco, use `docker compose logs -f api`; pressione `Ctrl+C` para parar de acompanhar os logs.
+A suíte exige **100% de cobertura de linhas de `api.py`, `cli.py` e `db.py`**. `index.html`, testes, infraestrutura e configuração não entram nessa métrica.
 
-Para encerrar os serviços sem apagar os dados do volume PostgreSQL:
+Com `db` em execução, há também testes de integração que usam schemas temporários próprios, sem alterar os registros da aplicação:
 
 ```sh
-docker compose down
+docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_export_integration.py'], check=True)"
+docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_duplicate_integration.py'], check=True)"
 ```
+
+Esses testes são ignorados na suíte unitária quando `TEST_DATABASE_URL` não está definida. Para verificar manualmente: crie mais de cinco estudos, use filtros combinados na Web e na CLI, compare os resultados, exporte o CSV e confira que contém todas as páginas; duplique um registro e confira os IDs na Web.
+
+## Problemas comuns
+
+- `docker info` falha: inicie o Docker Desktop e aguarde o mecanismo de contêineres.
+- A API não inicia: consulte `docker compose logs --tail 50 db api`.
+- `password authentication failed for user "diariodev"`: o volume antigo foi criado com outro `POSTGRES_PASSWORD`. Reuse a senha antiga; se não a souber, altere a senha do usuário no PostgreSQL em execução com `docker compose exec db psql -U diariodev -d diariodev`, `\password diariodev` e `\q`, depois reinicie a API. Isso preserva os dados.
+- `HTTP 401`: confira o usuário e a senha inicial; para a CLI, gere outro token após uma hora e defina `DIARIODEV_TOKEN` no terminal.
+- `.env` ou o token não devem ser enviados ao Git. Para parar sem apagar os registros, use `docker compose down`.
