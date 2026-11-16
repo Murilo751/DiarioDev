@@ -384,3 +384,34 @@ def test_dashboard_web_reads_three_groupings_and_logs(monkeypatch, capsys):
         db.dashboard_web("database-url", "req-dash-error")
     failure = json.loads(capsys.readouterr().out)
     assert failure["status"] == "error" and failure["request_id"] == "req-dash-error"
+
+
+def test_export_records_cli_combines_filters_without_pagination(monkeypatch, capsys):
+    connect, cursor = connection_mock(monkeypatch)
+    cursor.fetchall.return_value = [tuple(range(7))] * 12
+    filters = {"author": "student' OR 1=1 --", "category": "Worktree",
+               "date_from": date(2026, 11, 1), "date_to": date(2026, 11, 15)}
+    assert len(db.export_records_cli("database-url", filters, "title", "asc", "req-cli-export")) == 12
+    connect.assert_called_once_with("database-url")
+    sql, parameters = cursor.execute.call_args.args
+    assert "LOWER(author) = LOWER(%s) AND STRPOS(LOWER(topic), LOWER(%s)) > 0" in sql
+    assert "study_date >= %s AND study_date <= %s" in sql and "ORDER BY title ASC, id DESC" in sql
+    assert "LIMIT" not in sql and "OFFSET" not in sql and filters["author"] not in sql
+    assert parameters == tuple(filters.values())
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["layer"] == "db" and event["operation"] == "export"
+    assert event["request_id"] == "req-cli-export"
+
+    cursor.fetchall.return_value = []
+    assert db.export_records_cli("database-url", {}, "study_date", "desc", "req-cli-empty") == []
+    sql, parameters = cursor.execute.call_args.args
+    assert "WHERE" not in sql and parameters == ()
+
+
+def test_export_records_cli_failure_is_logged(monkeypatch, capsys):
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.export_records_cli("database-url", {}, "title", "asc", "req-cli-export-error")
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["level"] == "ERROR"
+    assert event["request_id"] == "req-cli-export-error"
