@@ -479,6 +479,49 @@ def test_cli_change_status_missing_and_database_failure(monkeypatch, settings):
                         headers=headers).status_code == 503
 
 
+def test_cli_duplicate_requires_bearer_even_with_web_session(monkeypatch, settings):
+    client = logged_in_client(monkeypatch, settings)
+    duplicate = MagicMock()
+    monkeypatch.setattr(api.db, "duplicate_record_cli", duplicate)
+    for headers in ({}, {"Authorization": "Bearer invalid"}):
+        assert client.post("/api/cli/records/1/duplicate", headers=headers).status_code == 401
+    duplicate.assert_not_called()
+
+
+def test_cli_duplicate_returns_new_record_and_correlates_logs(monkeypatch, settings, capsys):
+    client, headers = cli_record_client(monkeypatch, settings)
+    connection = MagicMock()
+    cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
+    copy = (2,) + ROW[1:6] + ("inactive",)
+    cursor.fetchone.return_value = copy
+    monkeypatch.setattr(api.db.psycopg, "connect", MagicMock(return_value=connection))
+    capsys.readouterr()
+    response = client.post("/api/cli/records/1/duplicate", headers=headers)
+    assert response.status_code == 201
+    assert response.json == api.serialize_record(copy)
+    assert cursor.execute.call_args.args[1] == ("student", 1)
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert {event["layer"] for event in events} == {"api", "db"}
+    assert len({event["request_id"] for event in events}) == 1
+    assert all(event["client"] == "cli" and event["operation"] == "duplicate"
+               and event["status"] == "success" for event in events)
+    assert headers["Authorization"] not in json.dumps(events)
+
+
+def test_cli_duplicate_missing_and_database_failure(monkeypatch, settings, capsys):
+    client, headers = cli_record_client(monkeypatch, settings)
+    monkeypatch.setattr(api.db, "duplicate_record_cli", lambda *_: None)
+    capsys.readouterr()
+    response = client.post("/api/cli/records/99/duplicate", headers=headers)
+    assert response.status_code == 404 and response.json == {"error": "Record not found"}
+    assert json.loads(capsys.readouterr().out)["level"] == "WARN"
+
+    monkeypatch.setattr(api.db, "duplicate_record_cli", MagicMock(side_effect=RuntimeError("failed")))
+    response = client.post("/api/cli/records/1/duplicate", headers=headers)
+    assert response.status_code == 503 and response.json == {"error": "Record unavailable"}
+    assert json.loads(capsys.readouterr().out)["level"] == "ERROR"
+
+
 def csv_rows(response):
     return list(csv.DictReader(io.StringIO(response.data.decode("utf-8-sig"), newline="")))
 

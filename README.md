@@ -422,6 +422,58 @@ docker compose cp cli:/app/registros.csv ./registros.csv
 
 A CLI chama apenas esse endpoint REST, que usa a consulta própria `export_records_cli` de `db.py` (separada da consulta de exportação Web e sem `LIMIT`/`OFFSET`). Os logs saem com `client: "cli"`, operação `export` nas camadas `api` e `db`, com a mesma `request_id`: consulte com `docker compose logs -f api`.
 
+## Duplicar registros pela CLI (issue #16)
+
+Com os serviços iniciados e um token válido em `$env:DIARIODEV_TOKEN` (veja
+"Rodar a CLI"), informe o ID mostrado em `list`:
+
+```powershell
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py duplicate 3
+```
+
+Exemplo de resposta: `Registro #3 duplicado. Novo registro: #4.`. O novo ID é
+gerado pelo banco e pode ter outro valor. Para consultar a ajuda:
+`docker compose exec cli python cli.py duplicate --help`. No Bash, use
+`-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"`.
+
+| Método e rota | Acesso | Resultado |
+|---|---|---|
+| `POST /api/cli/records/{id}/duplicate` | Bearer token | Retorna a cópia com ID próprio (`201`); `401` sem token válido, `404` para registro inexistente e `503` se o banco falhar |
+
+O comando não recebe os campos novamente nem acessa o banco diretamente. A API
+usa a consulta SQL própria `duplicate_record_cli` em `db.py`: um único
+`INSERT ... SELECT` copia título, assunto, resumo, data, minutos e status
+(`active` ou `inactive`). Assim como na duplicação Web, a cópia recebe como autor
+o usuário autenticado e uma nova data de criação. O registro original permanece
+intacto, inclusive autor, status e data de criação. Cada execução cria uma nova
+cópia; o comando não repete a requisição automaticamente.
+
+Para conferir, liste os registros, execute `duplicate` com um ID existente e
+recarregue a Web. A tabela deve mostrar o original e a cópia com IDs diferentes.
+Se houver mais de cinco registros, use a paginação ou os filtros. A API e o banco
+registram `duplicate`, com `client: "cli"` e o mesmo `request_id`, inclusive
+falhas. Consulte com `docker compose logs -f api`.
+
+Os testes unitários da CLI, API e banco integram a suíte completa:
+
+```sh
+docker compose run --rm --no-deps --build tests
+```
+
+`tests/test_duplicate_integration.py` também verifica o comando real da CLI por
+HTTP com PostgreSQL, a visibilidade na listagem Web, os dois status, duplicações
+sucessivas, ID inexistente e a preservação de todos os dados do original. Usa um
+schema temporário próprio, removido ao final, e não altera registros existentes.
+Com o banco em execução, rode:
+
+```sh
+docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_duplicate_integration.py'], check=True)"
+```
+
+Sem `TEST_DATABASE_URL`, esses testes de integração são pulados na execução
+unitária. A issue #16 é desenvolvida em uma worktree exclusiva, na branch
+`codex/issue-16-cli-duplicate`, criada sobre o `main` atualizado até `cf7e7d0`.
+
 ## Banco e logs
 
 PostgreSQL mantém os dados no volume `postgres_data`. A tabela `users` guarda o usuário inicial e seu hash. A tabela `records` guarda título, assunto, resumo, data de estudo e minutos estudados.

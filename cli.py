@@ -85,6 +85,8 @@ def main(argv=None):
                                 help="Arquivo CSV a gravar (padrão: registros.csv)")
     delete_command = commands.add_parser("delete", help="Excluir um registro pelo identificador")
     delete_command.add_argument("id", type=int, help="Identificador do registro")
+    duplicate_command = commands.add_parser("duplicate", help="Duplicar um registro com novo ID")
+    duplicate_command.add_argument("id", type=int, help="Identificador do registro original")
     status_command = commands.add_parser("status", help="Ativar ou desativar um registro")
     status_command.add_argument("id", type=int, help="Identificador do registro")
     status_command.add_argument("status", choices=("active", "inactive"),
@@ -128,6 +130,9 @@ def main(argv=None):
         elif args.command == "status":
             status, result = call_api(args.api_url, f"/api/cli/records/{args.id}/status", "PATCH",
                                       {"status": args.status}, args.token)
+        elif args.command == "duplicate":
+            status, result = call_api(args.api_url, f"/api/cli/records/{args.id}/duplicate", "POST",
+                                      token=args.token)
         else:
             payload = {
                 "title": args.title, "topic": args.topic, "summary": args.summary,
@@ -143,7 +148,7 @@ def main(argv=None):
         print("Não foi possível conectar à API.", file=sys.stderr)
         return 1
 
-    if status != (201 if args.command == "create" else 200):
+    if status != (201 if args.command in ("create", "duplicate") else 200):
         if "errors" in result:
             for field, message in result["errors"].items():
                 print(f"{field}: {message}", file=sys.stderr)
@@ -185,6 +190,8 @@ def main(argv=None):
         print(f"Registro #{result['id']}: {'ativo' if result['status'] == 'active' else 'inativo'}.")
     elif args.command == "create":
         print(f"Registro #{result['id']} criado.")
+    elif args.command == "duplicate":
+        print(f"Registro #{args.id} duplicado. Novo registro: #{result['id']}.")
     else:
         print(f"Registro #{result['id']} atualizado.")
     return 0
