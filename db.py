@@ -405,6 +405,27 @@ def duplicate_record(database_url, record_id, author, request_id):
         raise
 
 
+def duplicate_record_cli(database_url, record_id, author, request_id):
+    """Copy a record through independent CLI SQL, preserving the original row."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO records (title, topic, summary, study_date, minutes, status, author) "
+                    "SELECT title, topic, summary, study_date, minutes, status, %s "
+                    "FROM records WHERE id = %s RETURNING " + RECORD_COLUMNS,
+                    (author, record_id),
+                )
+                row = cursor.fetchone()
+        log_event("INFO" if row else "WARN", "cli", "duplicate",
+                  "success" if row else "error", request_id,
+                  "Record duplicated" if row else "Record not found")
+        return row
+    except Exception:
+        log_event("ERROR", "cli", "duplicate", "error", request_id, "Record duplication failed")
+        raise
+
+
 DASHBOARD_LIMIT = 10
 MONTH_LIMIT = 12
 

@@ -567,6 +567,21 @@ def create_app(config=None, initialize=True):
         log_event("INFO", "delete", "success", g.request_id, "Record deleted", "cli")
         return jsonify(id=record_id, deleted=True)
 
+    @app.post("/api/cli/records/<int:record_id>/duplicate")
+    @cli_auth_required("duplicate")
+    def cli_duplicate_record(record_id):
+        try:
+            row = db.duplicate_record_cli(app.config["DATABASE_URL"], record_id,
+                                          g.cli_user["username"], g.request_id)
+        except Exception:
+            log_event("ERROR", "duplicate", "error", g.request_id, "Record duplication failed", "cli")
+            return jsonify(error="Record unavailable"), 503
+        if row is None:
+            log_event("WARN", "duplicate", "error", g.request_id, "Record not found", "cli")
+            return jsonify(error="Record not found"), 404
+        log_event("INFO", "duplicate", "success", g.request_id, "Record duplicated", "cli")
+        return jsonify(serialize_record(row)), 201
+
     @app.patch("/api/cli/records/<int:record_id>/status")
     @cli_auth_required("status")
     def cli_change_status(record_id):

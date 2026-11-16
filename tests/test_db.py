@@ -52,6 +52,33 @@ def test_user_lookup_and_failure(monkeypatch, capsys):
 RECORD = {"title": "Git", "topic": "Worktree", "summary": "Estudo", "study_date": "2026-11-15", "minutes": 30, "author": "student"}
 
 
+def test_duplicate_cli_found_missing_and_failure(monkeypatch, capsys):
+    connect, cursor = connection_mock(monkeypatch)
+    row = (18, "Git", "Worktree", "Estudo", date(2026, 11, 15), 30, "inactive")
+    cursor.fetchone.return_value = row
+    assert db.duplicate_record_cli("database-url", 17, "student", "req-duplicate") == row
+    connect.assert_called_once_with("database-url")
+    query, parameters = cursor.execute.call_args.args
+    assert query.startswith("INSERT INTO records")
+    assert "SELECT title, topic, summary, study_date, minutes, status, %s" in query
+    assert "FROM records WHERE id = %s RETURNING " + db.RECORD_COLUMNS in query
+    assert parameters == ("student", 17) and cursor.execute.call_count == 1
+    event = json.loads(capsys.readouterr().out)
+    assert (event["layer"], event["client"], event["operation"], event["status"],
+            event["request_id"]) == ("db", "cli", "duplicate", "success", "req-duplicate")
+
+    cursor.fetchone.return_value = None
+    assert db.duplicate_record_cli("database-url", 99, "student", "req-missing") is None
+    event = json.loads(capsys.readouterr().out)
+    assert event["level"] == "WARN" and event["status"] == "error"
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.duplicate_record_cli("database-url", 17, "student", "req-failed")
+    event = json.loads(capsys.readouterr().out)
+    assert event["level"] == "ERROR" and event["request_id"] == "req-failed"
+
+
 def test_create_record_and_failure(monkeypatch, capsys):
     connect, cursor = connection_mock(monkeypatch)
     cursor.fetchone.return_value = (1, "Git", "Worktree", "Estudo", "2026-11-15", 30, "active")

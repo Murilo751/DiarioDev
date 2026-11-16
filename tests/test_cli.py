@@ -2,11 +2,39 @@ import io
 import json
 import runpy
 import sys
+from unittest.mock import MagicMock
 from urllib.error import HTTPError, URLError
 
 import pytest
 
 import cli
+
+
+def test_duplicate_posts_to_cli_endpoint_and_shows_both_ids(monkeypatch, capsys):
+    request_api = MagicMock(return_value=(201, {"id": 18}))
+    monkeypatch.setattr(cli, "call_api", request_api)
+    monkeypatch.setenv("DIARIODEV_TOKEN", "env-token")
+    assert cli.main(["duplicate", "17"]) == 0
+    request_api.assert_called_once_with("http://api:8000", "/api/cli/records/17/duplicate",
+                                        "POST", token="env-token")
+    assert capsys.readouterr().out == "Registro #17 duplicado. Novo registro: #18.\n"
+
+
+@pytest.mark.parametrize("status, message", [
+    (401, "Unauthorized"), (404, "Record not found"), (503, "Record unavailable"),
+])
+def test_duplicate_reports_api_errors(monkeypatch, capsys, status, message):
+    monkeypatch.setattr(cli, "call_api", lambda *_, **__: (status, {"error": message}))
+    assert cli.main(["duplicate", "17"]) == 1
+    output = capsys.readouterr()
+    assert output.err == f"HTTP {status}: {message}\n" and output.out == ""
+
+
+@pytest.mark.parametrize("arguments", [["duplicate"], ["duplicate", "abc"]])
+def test_duplicate_requires_integer_id(arguments):
+    with pytest.raises(SystemExit) as error:
+        cli.main(arguments)
+    assert error.value.code == 2
 
 
 class Response(io.BytesIO):
