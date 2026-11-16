@@ -386,6 +386,30 @@ def test_dashboard_web_reads_three_groupings_and_logs(monkeypatch, capsys):
     assert failure["status"] == "error" and failure["request_id"] == "req-dash-error"
 
 
+def test_dashboard_cli_reads_matching_groupings_with_own_queries_and_logs(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchall.side_effect = [[("Git", 3), ("Docker", 1)], [("student", 4)],
+                                   [("2026-10", 1), ("2026-11", 3)]]
+    assert db.dashboard_cli("database-url", "req-cli-dash") == (
+        [("Git", 3), ("Docker", 1)], [("student", 4)],
+        [("2026-10", 1), ("2026-11", 3)])
+    queries = [call.args[0] for call in cursor.execute.call_args_list]
+    assert "GROUP BY topic" in queries[0] and "ORDER BY COUNT(*) DESC, topic ASC" in queries[0]
+    assert "GROUP BY author" in queries[1] and "ORDER BY COUNT(*) DESC, author ASC" in queries[1]
+    assert "TO_CHAR(study_date, 'YYYY-MM')" in queries[2]
+    assert "ORDER BY month DESC LIMIT %s" in queries[2] and "ORDER BY month ASC" in queries[2]
+    assert [call.args[1] for call in cursor.execute.call_args_list] == [(10,), (10,), (12,)]
+    event = json.loads(capsys.readouterr().out)
+    assert event["layer"] == "db" and event["client"] == "cli"
+    assert event["operation"] == "dashboard" and event["request_id"] == "req-cli-dash"
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.dashboard_cli("database-url", "req-cli-dash-error")
+    failure = json.loads(capsys.readouterr().out)
+    assert failure["status"] == "error" and failure["request_id"] == "req-cli-dash-error"
+
+
 def test_export_records_cli_combines_filters_without_pagination(monkeypatch, capsys):
     connect, cursor = connection_mock(monkeypatch)
     cursor.fetchall.return_value = [tuple(range(7))] * 12

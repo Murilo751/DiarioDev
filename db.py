@@ -435,6 +435,32 @@ def dashboard_web(database_url, request_id):
         raise
 
 
+def dashboard_cli(database_url, request_id):
+    """Read the same three indicators through independent CLI queries."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT topic, COUNT(*) FROM records GROUP BY topic "
+                    "ORDER BY COUNT(*) DESC, topic ASC LIMIT %s", (DASHBOARD_LIMIT,))
+                by_category = cursor.fetchall()
+                cursor.execute(
+                    "SELECT author, COUNT(*) FROM records GROUP BY author "
+                    "ORDER BY COUNT(*) DESC, author ASC LIMIT %s", (DASHBOARD_LIMIT,))
+                by_author = cursor.fetchall()
+                cursor.execute(
+                    "SELECT month, total FROM ("
+                    "SELECT TO_CHAR(study_date, 'YYYY-MM') AS month, COUNT(*) AS total "
+                    "FROM records GROUP BY month ORDER BY month DESC LIMIT %s"
+                    ") AS latest ORDER BY month ASC", (MONTH_LIMIT,))
+                by_month = cursor.fetchall()
+        log_event("INFO", "cli", "dashboard", "success", request_id, "Dashboard indicators read")
+        return by_category, by_author, by_month
+    except Exception:
+        log_event("ERROR", "cli", "dashboard", "error", request_id, "Dashboard indicators failed")
+        raise
+
+
 def export_records_cli(database_url, filters, sort, direction, request_id):
     """Read all matching records for the CLI export with SQL of its own and no LIMIT/OFFSET."""
     conditions, parameters = [], []

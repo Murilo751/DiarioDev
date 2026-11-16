@@ -408,6 +408,24 @@ def create_app(config=None, initialize=True):
         log_event("INFO", "me", "success", g.request_id, "CLI token accepted", "cli")
         return jsonify(username=g.cli_user["username"])
 
+    @app.get("/api/cli/dashboard")
+    @cli_auth_required("dashboard")
+    def cli_dashboard():
+        try:
+            by_category, by_author, by_month = db.dashboard_cli(
+                app.config["DATABASE_URL"], g.request_id)
+        except Exception:
+            log_event("ERROR", "dashboard", "error", g.request_id,
+                      "Dashboard unavailable", "cli")
+            return jsonify(error="Dashboard unavailable"), 503
+        log_event("INFO", "dashboard", "success", g.request_id,
+                  "Dashboard indicators served", "cli")
+        return jsonify(
+            by_category=[{"label": label, "total": total} for label, total in by_category],
+            by_author=[{"label": label, "total": total} for label, total in by_author],
+            by_month=[{"label": label, "total": total} for label, total in by_month],
+        )
+
     @app.patch("/api/web/records/<int:record_id>/status")
     @login_required("status")
     def change_status(record_id):
