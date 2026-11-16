@@ -256,6 +256,26 @@ A saída tem o mesmo formato de `list`: uma linha `#id | data | título | assunt
 
 A CLI chama apenas esse endpoint, que usa a consulta própria `search_records_cli` de `db.py`, separada da consulta da Web. Os logs saem com `client: "cli"` e operação `search` nas camadas `api` e `db`, com a mesma `request_id`; consulte com `docker compose logs -f api`.
 
+## Dashboard Web (issue #6)
+
+Depois do login, a página mostra o **Dashboard** com três gráficos de barras, calculados com os registros reais do PostgreSQL. Os valores são lidos de `GET /api/web/dashboard` ao abrir ou recarregar a página e também são atualizados depois de salvar, duplicar ou excluir um registro. Passe o mouse sobre uma barra para ver o rótulo e o total.
+
+| Gráfico | O que conta | Regras |
+|---|---|---|
+| **Registros por categoria** | Número de registros de cada assunto (`topic`) | As 10 categorias com mais registros; empates em ordem alfabética |
+| **Registros por autor** | Número de registros de cada autor (usuário que criou o registro) | Os 10 autores com mais registros; empates em ordem alfabética |
+| **Registros por mês** | Número de registros por mês da data do estudo (`study_date`, formato `AAAA-MM`) | Os 12 meses mais recentes que têm registros, exibidos em ordem cronológica |
+
+Sem registros, cada gráfico mostra "Ainda não há registros.". Os gráficos são desenhados em SVG dentro de `index.html`, sem biblioteca externa nem acesso à internet.
+
+`GET /api/web/dashboard` exige login e retorna `200` com `by_category`, `by_author` e `by_month`, cada um com uma lista de objetos `{"label": "...", "total": N}`; sem sessão, retorna `401`, e falha no banco retorna `503`. A consulta tem SQL próprio em `db.py` (`dashboard_web`) e gera logs JSON com `client: "web"` e operação `dashboard`, com o mesmo `request_id` nas camadas `api` e `db`.
+
+Para conferir sem a página, com a sessão de login em `cookies.txt` (veja "Cadastro e edição de registros"):
+
+```sh
+curl -b cookies.txt http://localhost:8080/api/web/dashboard
+```
+
 ## Status do registro na Web (issue #13)
 
 Todo registro tem um status `active` (padrão) ou `inactive`, salvo na coluna `records.status` (adicionada automaticamente na inicialização da API). Ao editar um registro, a página mostra o status atual e o botão **Ativar/Desativar**, que chama `PATCH /api/web/records/{id}/status` e persiste a mudança no PostgreSQL. As respostas de registros incluem o campo `status`.
