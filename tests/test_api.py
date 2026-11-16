@@ -689,6 +689,52 @@ def test_web_dashboard_database_failure(monkeypatch, settings):
     assert client.get("/api/web/dashboard").status_code == 503
 
 
+def test_cli_dashboard_requires_valid_token(settings, monkeypatch):
+    query = MagicMock()
+    monkeypatch.setattr(api.db, "dashboard_cli", query)
+    client = api.create_app(settings, initialize=False).test_client()
+    assert client.get("/api/cli/dashboard").status_code == 401
+    assert client.get("/api/cli/dashboard", headers={"Authorization": "Bearer invalid"}).status_code == 401
+    query.assert_not_called()
+
+
+def test_cli_dashboard_returns_web_indicators_with_correlated_logs(monkeypatch, settings, capsys):
+    client, headers = cli_record_client(monkeypatch, settings)
+    web_query = MagicMock()
+    monkeypatch.setattr(api.db, "dashboard_web", web_query)
+    calls = []
+
+    def dashboard(url, request_id):
+        calls.append(request_id)
+        return [("Git", 3)], [("student", 4)], [("2026-11", 4)]
+
+    monkeypatch.setattr(api.db, "dashboard_cli", dashboard)
+    capsys.readouterr()
+    response = client.get("/api/cli/dashboard", headers=headers)
+    assert response.status_code == 200
+    assert response.json == {
+        "by_category": [{"label": "Git", "total": 3}],
+        "by_author": [{"label": "student", "total": 4}],
+        "by_month": [{"label": "2026-11", "total": 4}],
+    }
+    web_query.assert_not_called()
+    event = json.loads(capsys.readouterr().out)
+    assert event["client"] == "cli" and event["operation"] == "dashboard"
+    assert event["request_id"] == calls[0]
+
+
+def test_cli_dashboard_database_failure(monkeypatch, settings):
+    client, headers = cli_record_client(monkeypatch, settings)
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "dashboard_cli", fail)
+    response = client.get("/api/cli/dashboard", headers=headers)
+    assert response.status_code == 503
+    assert response.json == {"error": "Dashboard unavailable"}
+
+
 def test_cli_export_requires_valid_token(settings, monkeypatch):
     query = MagicMock()
     monkeypatch.setattr(api.db, "export_records_cli", query)

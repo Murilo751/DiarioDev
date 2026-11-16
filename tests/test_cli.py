@@ -86,6 +86,40 @@ def test_main_reports_unauthorized_and_connection_failure(monkeypatch, capsys):
     assert "conectar" in capsys.readouterr().err
 
 
+def test_dashboard_prints_three_indicators_from_cli_endpoint(monkeypatch, capsys):
+    calls = []
+
+    def request_api(*args, **kwargs):
+        calls.append((args, kwargs))
+        return 200, {
+            "by_category": [{"label": "Git", "total": 3}],
+            "by_author": [{"label": "student", "total": 4}],
+            "by_month": [{"label": "2026-11", "total": 4}],
+        }
+
+    monkeypatch.setattr(cli, "call_api", request_api)
+    monkeypatch.setenv("DIARIODEV_TOKEN", "env-token")
+    assert cli.main(["dashboard"]) == 0
+    assert calls == [(("http://api:8000", "/api/cli/dashboard"), {"token": "env-token"})]
+    assert capsys.readouterr().out.splitlines() == [
+        "Por categoria:", "  Git: 3", "Por autor:", "  student: 4", "Por mês:", "  2026-11: 4",
+    ]
+
+
+def test_dashboard_empty_and_unauthorized(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "call_api", lambda *_args, **_kwargs: (200, {
+        "by_category": [], "by_author": [], "by_month": [],
+    }))
+    assert cli.main(["dashboard"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "Por categoria:", "  (sem dados)", "Por autor:", "  (sem dados)",
+        "Por mês:", "  (sem dados)",
+    ]
+    monkeypatch.setattr(cli, "call_api", lambda *_args, **_kwargs: (401, {"error": "Unauthorized"}))
+    assert cli.main(["dashboard"]) == 1
+    assert "HTTP 401" in capsys.readouterr().err
+
+
 def test_create_and_edit_send_records_only_to_api(monkeypatch, capsys):
     calls = []
 

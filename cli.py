@@ -40,6 +40,7 @@ def main(argv=None):
     token_command.add_argument("--password-stdin", action="store_true",
                                help="Ler a senha da entrada padrão")
     commands.add_parser("me", help="Verificar o token e mostrar o usuário")
+    commands.add_parser("dashboard", help="Mostrar contagens por categoria, autor e mês")
     for name, help_text in (("create", "Criar um registro"), ("edit", "Editar um registro")):
         command = commands.add_parser(name, help=help_text)
         if name == "edit":
@@ -100,6 +101,8 @@ def main(argv=None):
                                       {"username": args.username, "password": password})
         elif args.command == "me":
             status, result = call_api(args.api_url, "/api/cli/me", token=args.token)
+        elif args.command == "dashboard":
+            status, result = call_api(args.api_url, "/api/cli/dashboard", token=args.token)
         elif args.command == "list":
             query = urlencode({"page": args.page, "page_size": args.page_size,
                                "sort": args.sort, "direction": args.direction})
@@ -153,6 +156,14 @@ def main(argv=None):
         print(result["token"])
     elif args.command == "me":
         print(f"Usuário: {result['username']}")
+    elif args.command == "dashboard":
+        for title, key in (("Por categoria", "by_category"),
+                           ("Por autor", "by_author"), ("Por mês", "by_month")):
+            print(f"{title}:")
+            if not result[key]:
+                print("  (sem dados)")
+            for item in result[key]:
+                print(f"  {item['label']}: {item['total']}")
     elif args.command in ("list", "search"):
         for item in result["items"]:
             print(f"#{item['id']} | {item['study_date']} | {item['title']} | "

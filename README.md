@@ -1,6 +1,6 @@
 # DiarioDev
 
-Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão; a #4 adiciona busca avançada na Web; a #7 adiciona autenticação por token na CLI; a #8 permite criar e editar registros pela CLI; a #9 permite listar e excluir registros pela CLI; a #10 adiciona a busca avançada pela CLI; a #14 permite alterar o status pela CLI.
+Diário de estudos para registrar o aprendizado em desenvolvimento. A issue #1 entrega a página inicial e o login Web; a #2 adiciona cadastro e edição; a #3 adiciona listagem e exclusão; a #4 adiciona busca avançada na Web; a #7 adiciona autenticação por token na CLI; a #8 permite criar e editar registros pela CLI; a #9 permite listar e excluir registros pela CLI; a #10 adiciona a busca avançada pela CLI; a #12 mostra os indicadores pela CLI; a #14 permite alterar o status pela CLI.
 
 ## Rodar o sistema pela primeira vez
 
@@ -275,6 +275,29 @@ Para conferir sem a página, com a sessão de login em `cookies.txt` (veja "Cada
 ```sh
 curl -b cookies.txt http://localhost:8080/api/web/dashboard
 ```
+
+## Indicadores pela CLI (issue #12)
+
+Com um token válido em `$env:DIARIODEV_TOKEN` (veja "Rodar a CLI"), consulte os mesmos três conjuntos de valores do Dashboard Web:
+
+```powershell
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py dashboard
+```
+
+A saída mostra as contagens **por categoria, autor e mês** em texto. Por exemplo:
+
+```text
+Por categoria:
+  Git: 3
+Por autor:
+  student: 3
+Por mês:
+  2026-11: 3
+```
+
+Quando não houver registros em um conjunto, a CLI mostra `(sem dados)`. No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"`.
+
+`GET /api/cli/dashboard` exige Bearer token e devolve `200` com `by_category`, `by_author` e `by_month`, no mesmo formato e com as mesmas regras de limite e ordenação de `GET /api/web/dashboard`. Sem token válido, retorna `401`; se o banco falhar, retorna `503`. A CLI chama somente o endpoint `/api/cli/dashboard`, cuja consulta SQL própria (`dashboard_cli` em `db.py`) lê os registros no PostgreSQL. Os logs JSON da API e do banco usam `client: "cli"`, operação `dashboard` e a mesma `request_id`; consulte com `docker compose logs -f api`.
 
 ## Status do registro na Web (issue #13)
 
