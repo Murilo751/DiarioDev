@@ -224,6 +224,47 @@ def test_search_reports_invalid_parameters_and_auth_errors(monkeypatch, capsys):
     assert "HTTP 401" in capsys.readouterr().err
 
 
+def test_call_api_raw_returns_bytes(monkeypatch):
+    monkeypatch.setattr(cli, "urlopen", lambda _request, timeout: Response(b"id,title\r\n"))
+    assert cli.call_api("http://api:8000", "/api/cli/records/export", raw=True) == (200, b"id,title\r\n")
+
+
+def test_export_writes_csv_with_filters(monkeypatch, capsys, tmp_path):
+    calls = []
+    content = "\ufeffid,title\r\n1,Git\r\n2,\"Linha 1\nLinha 2\"\r\n".encode("utf-8")
+
+    def request_api(*args, **kwargs):
+        calls.append((args, kwargs))
+        return 200, content
+
+    monkeypatch.setattr(cli, "call_api", request_api)
+    monkeypatch.setenv("DIARIODEV_TOKEN", "env-token")
+    target = tmp_path / "saida.csv"
+    assert cli.main(["export", "--author", "student", "--category", "Git", "--date-from", "2026-11-01",
+                     "--date-to", "2026-11-30", "--sort", "title", "--direction", "asc",
+                     "--output", str(target)]) == 0
+    assert calls[0] == (("http://api:8000", "/api/cli/records/export?sort=title&direction=asc"
+                         "&author=student&category=Git&date_from=2026-11-01&date_to=2026-11-30"),
+                        {"token": "env-token", "raw": True})
+    assert target.read_bytes() == content
+    assert capsys.readouterr().out == f"2 registros exportados para {target}.\n"
+    assert cli.main(["export", "--output", str(target)]) == 0
+    assert calls[1][0][1] == "/api/cli/records/export?sort=study_date&direction=desc"
+
+
+def test_export_reports_api_and_file_errors(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(cli, "call_api", lambda *_a, **_k: (400, {"errors": {"date_from": "Data inválida"}}))
+    assert cli.main(["export", "--output", str(tmp_path / "x.csv")]) == 1
+    assert "date_from: Data inválida" in capsys.readouterr().err
+    assert not (tmp_path / "x.csv").exists()
+    monkeypatch.setattr(cli, "call_api", lambda *_a, **_k: (401, {"error": "Unauthorized"}))
+    assert cli.main(["export"]) == 1
+    assert "HTTP 401" in capsys.readouterr().err
+    monkeypatch.setattr(cli, "call_api", lambda *_a, **_k: (200, b"id\r\n"))
+    assert cli.main(["export", "--output", str(tmp_path / "pasta" / "x.csv")]) == 1
+    assert "Não foi possível gravar" in capsys.readouterr().err
+
+
 def test_module_entrypoint_shows_help(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["cli.py", "--help"])
     with pytest.raises(SystemExit) as result:

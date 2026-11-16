@@ -365,6 +365,40 @@ Esta entrega corresponde à **PR 2 do ciclo 3 (issue #5)** e usa a busca avança
 da **issue #4 / PR #23**, já integrada ao `main`. A PR de exportação contém apenas
 as alterações da #5 e exige a aprovação de todos os colegas antes da integração.
 
+## Exportação CSV pela CLI (issue #11)
+
+Com um token válido em `$env:DIARIODEV_TOKEN` (veja "Rodar a CLI"), o comando `export` baixa **todos** os registros que correspondem aos filtros, sem paginação, e grava o arquivo **dentro do contêiner `cli`** (padrão: `/app/registros.csv`). Os filtros são os mesmos da busca da CLI (issue #10) e da Web, combinados com **E**:
+
+```powershell
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py export
+docker compose exec -e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN cli python cli.py export --author admin --category Git --date-from 2026-11-01 --date-to 2026-11-30 --sort title --direction asc --output filtrados.csv
+```
+
+| Opção | Significado | Padrão |
+|---|---|---|
+| `--author` | Nome completo do autor, sem diferenciar maiúsculas | todos |
+| `--category` | Trecho do assunto (`topic`), sem diferenciar maiúsculas | todos |
+| `--date-from` / `--date-to` | Datas inclusivas `AAAA-MM-DD` (podem ser usadas separadamente) | sem limite |
+| `--sort` | `study_date`, `title`, `topic` ou `minutes` | `study_date` |
+| `--direction` | `asc` ou `desc` | `desc` |
+| `--output` | Arquivo CSV a gravar no contêiner | `registros.csv` |
+
+A CLI responde, por exemplo, `12 registros exportados para registros.csv.`. Sem filtros, exporta todos os registros (ativos e inativos).
+
+**Onde acessar o arquivo:** ele fica no contêiner, em `/app/<arquivo>`. Copie-o para a pasta do projeto no seu computador com o Compose e abra no Excel ou em um editor:
+
+```powershell
+docker compose cp cli:/app/registros.csv ./registros.csv
+```
+
+(Com `--output filtrados.csv`, use `cli:/app/filtrados.csv`.) No Bash, use `-e DIARIODEV_TOKEN="$DIARIODEV_TOKEN"` no lugar de `-e DIARIODEV_TOKEN=$env:DIARIODEV_TOKEN`. O CSV usa vírgula, cabeçalho `id,title,topic,summary,study_date,minutes,status`, datas ISO e UTF-8 com BOM; sem resultados, contém só o cabeçalho. Datas inválidas, intervalo invertido ou ordenação inválida retornam `HTTP 400` com a mensagem por campo; sem token válido, `HTTP 401`; falha no banco, `HTTP 503`.
+
+| Método e rota | Acesso | Resultado |
+|---|---|---|
+| `GET /api/cli/records/export` | Bearer token | Aceita `author`, `category`, `date_from`, `date_to`, `sort` e `direction`; retorna `text/csv` (`200`), ou `400` / `401` / `503` |
+
+A CLI chama apenas esse endpoint REST, que usa a consulta própria `export_records_cli` de `db.py` (separada da consulta de exportação Web e sem `LIMIT`/`OFFSET`). Os logs saem com `client: "cli"`, operação `export` nas camadas `api` e `db`, com a mesma `request_id`: consulte com `docker compose logs -f api`.
+
 ## Banco e logs
 
 PostgreSQL mantém os dados no volume `postgres_data`. A tabela `users` guarda o usuário inicial e seu hash. A tabela `records` guarda título, assunto, resumo, data de estudo e minutos estudados.

@@ -98,6 +98,29 @@ def export_parameters(args):
     return filters, sort, direction, errors
 
 
+CSV_COLUMNS = ("id", "title", "topic", "summary", "study_date", "minutes", "status")
+
+
+def records_csv(rows):
+    """Serialize records as UTF-8 CSV with BOM and a header row."""
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(CSV_COLUMNS)
+    for row in rows:
+        record = serialize_record(row)
+        writer.writerow([record[column] for column in CSV_COLUMNS])
+    return output.getvalue().encode("utf-8-sig")
+
+
+def csv_response(content):
+    return Response(
+        content,
+        content_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="registros.csv"',
+                 "Cache-Control": "no-store"},
+    )
+
+
 def create_app(config=None, initialize=True):
     app = Flask(__name__)
     app.config.update(
@@ -300,23 +323,12 @@ def create_app(config=None, initialize=True):
             return jsonify(errors=errors), 400
         try:
             rows = db.export_records(app.config["DATABASE_URL"], filters, sort, direction, g.request_id)
-            output = io.StringIO(newline="")
-            writer = csv.writer(output)
-            columns = ("id", "title", "topic", "summary", "study_date", "minutes", "status")
-            writer.writerow(columns)
-            for row in rows:
-                record = serialize_record(row)
-                writer.writerow([record[column] for column in columns])
+            content = records_csv(rows)
         except Exception:
             log_event("ERROR", "export", "error", g.request_id, "Record export failed")
             return jsonify(error="Export unavailable"), 503
         log_event("INFO", "export", "success", g.request_id, "Records exported")
-        return Response(
-            output.getvalue().encode("utf-8-sig"),
-            content_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": 'attachment; filename="registros.csv"',
-                     "Cache-Control": "no-store"},
-        )
+        return csv_response(content)
 
     @app.post("/api/web/records/<int:record_id>/duplicate")
     @login_required("duplicate")
@@ -505,6 +517,23 @@ def create_app(config=None, initialize=True):
         return jsonify(items=[serialize_record(row) for row in rows], page=page,
                        page_size=page_size, total=total,
                        total_pages=(total + page_size - 1) // page_size)
+
+    @app.get("/api/cli/records/export")
+    @cli_auth_required("export")
+    def cli_export_records():
+        filters, sort, direction, errors = export_parameters(request.args)
+        if errors:
+            log_event("WARN", "export", "error", g.request_id, "Invalid export parameters", "cli")
+            return jsonify(errors=errors), 400
+        try:
+            rows = db.export_records_cli(app.config["DATABASE_URL"], filters, sort,
+                                         direction, g.request_id)
+            content = records_csv(rows)
+        except Exception:
+            log_event("ERROR", "export", "error", g.request_id, "Record export failed", "cli")
+            return jsonify(error="Export unavailable"), 503
+        log_event("INFO", "export", "success", g.request_id, "Records exported", "cli")
+        return csv_response(content)
 
     @app.delete("/api/cli/records/<int:record_id>")
     @cli_auth_required("delete")

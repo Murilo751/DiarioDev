@@ -1,7 +1,9 @@
 """Command-line client for the DiarioDev REST API."""
 
 import argparse
+import csv
 import getpass
+import io
 import json
 import os
 import sys
@@ -10,7 +12,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-def call_api(base_url, path, method="GET", payload=None, token=None):
+def call_api(base_url, path, method="GET", payload=None, token=None, raw=False):
     headers = {}
     if payload is not None:
         headers["Content-Type"] = "application/json"
@@ -20,7 +22,7 @@ def call_api(base_url, path, method="GET", payload=None, token=None):
     request = Request(base_url.rstrip("/") + path, data=body, headers=headers, method=method)
     try:
         with urlopen(request, timeout=10) as response:
-            return response.status, json.load(response)
+            return response.status, response.read() if raw else json.load(response)
     except HTTPError as error:
         return error.code, json.load(error)
 
@@ -68,6 +70,18 @@ def main(argv=None):
                                 help="Campo de ordenação (padrão: study_date)")
     search_command.add_argument("--direction", default="desc", choices=("asc", "desc"),
                                 help="Direção da ordenação (padrão: desc)")
+    export_command = commands.add_parser("export", help="Exportar registros filtrados em CSV")
+    export_command.add_argument("--author", help="Autor do registro (usuário que o criou)")
+    export_command.add_argument("--category", help="Categoria: trecho do assunto (topic)")
+    export_command.add_argument("--date-from", help="Data inicial do estudo, inclusiva (AAAA-MM-DD)")
+    export_command.add_argument("--date-to", help="Data final do estudo, inclusiva (AAAA-MM-DD)")
+    export_command.add_argument("--sort", default="study_date",
+                                choices=("study_date", "title", "topic", "minutes"),
+                                help="Campo de ordenação (padrão: study_date)")
+    export_command.add_argument("--direction", default="desc", choices=("asc", "desc"),
+                                help="Direção da ordenação (padrão: desc)")
+    export_command.add_argument("--output", default="registros.csv",
+                                help="Arquivo CSV a gravar (padrão: registros.csv)")
     delete_command = commands.add_parser("delete", help="Excluir um registro pelo identificador")
     delete_command.add_argument("id", type=int, help="Identificador do registro")
     status_command = commands.add_parser("status", help="Ativar ou desativar um registro")
@@ -98,6 +112,13 @@ def main(argv=None):
                     query[name] = getattr(args, name)
             status, result = call_api(args.api_url, f"/api/cli/records/search?{urlencode(query)}",
                                       token=args.token)
+        elif args.command == "export":
+            query = {"sort": args.sort, "direction": args.direction}
+            for name in ("author", "category", "date_from", "date_to"):
+                if getattr(args, name):
+                    query[name] = getattr(args, name)
+            status, result = call_api(args.api_url, f"/api/cli/records/export?{urlencode(query)}",
+                                      token=args.token, raw=True)
         elif args.command == "delete":
             status, result = call_api(args.api_url, f"/api/cli/records/{args.id}", "DELETE",
                                       token=args.token)
@@ -138,6 +159,15 @@ def main(argv=None):
                   f"{item['topic']} | {item['minutes']} min")
         print(f"Página {result['page']} de {result['total_pages']} "
               f"({result['total']} registros)")
+    elif args.command == "export":
+        try:
+            with open(args.output, "wb") as output:
+                output.write(result)
+        except OSError as error:
+            print(f"Não foi possível gravar {args.output}: {error.strerror}", file=sys.stderr)
+            return 1
+        total = sum(1 for _ in csv.reader(io.StringIO(result.decode("utf-8-sig")))) - 1
+        print(f"{total} registros exportados para {args.output}.")
     elif args.command == "delete":
         print(f"Registro #{result['id']} excluído.")
     elif args.command == "status":
