@@ -59,6 +59,14 @@
     .search-filters label { margin: 0 0 6px; }
     .search-filters input { min-width: 150px; }
     .search-filters button { margin-bottom: 0; }
+    .dashboard { max-width: 1060px; margin: 48px auto 0; padding: 0 24px; }
+    .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 20px; }
+    .chart-card { background: #1c283a; border: 1px solid #35465b; border-radius: 16px; padding: 20px; }
+    .chart-card h3 { margin: 0 0 12px; font-size: 1.05rem; }
+    .chart-card svg { width: 100%; height: auto; display: block; }
+    .chart-label { fill: #b7c3d4; font-size: 12px; }
+    .chart-value { fill: #e8edf7; font-size: 12px; font-weight: 700; }
+    .chart-empty { color: #8fa1b8; margin: 0; }
     @media (max-width: 720px) { main { margin-top: 3vh; grid-template-columns: 1fr; gap: 28px; } .card { padding: 24px; } }
   </style>
 </head>
@@ -117,6 +125,17 @@
       </div>
     </section>
   </main>
+  <section id="dashboard-view" class="dashboard hidden" aria-label="Dashboard de estudos">
+    <div class="records-header">
+      <div><h2>Dashboard</h2><p>Indicadores calculados com os registros salvos no banco.</p></div>
+    </div>
+    <p id="dashboard-message" class="message" role="status"></p>
+    <div class="charts">
+      <div class="chart-card"><h3>Registros por categoria</h3><div id="chart-category"></div></div>
+      <div class="chart-card"><h3>Registros por autor</h3><div id="chart-author"></div></div>
+      <div class="chart-card"><h3>Registros por mês</h3><div id="chart-month"></div></div>
+    </div>
+  </section>
   <section id="records-view" class="records hidden" aria-label="Registros de estudo">
     <div class="records-header">
       <div><h2>Seus registros</h2><p>Consulte e organize o que você estudou.</p></div>
@@ -171,6 +190,7 @@
     const recordsView = document.getElementById('records-view');
     const listMessage = document.getElementById('list-message');
     const recordRows = document.getElementById('record-rows');
+    const dashboardView = document.getElementById('dashboard-view');
     let currentPage = 1;
     let selectedId = null;
     let currentPageItems = 0;
@@ -182,13 +202,16 @@
       loginView.classList.add('hidden');
       homeView.classList.remove('hidden');
       recordsView.classList.remove('hidden');
+      dashboardView.classList.remove('hidden');
       loadRecords();
+      loadDashboard();
     }
 
     function showLogin() {
       homeView.classList.add('hidden');
       loginView.classList.remove('hidden');
       recordsView.classList.add('hidden');
+      dashboardView.classList.add('hidden');
       document.getElementById('password').value = '';
     }
 
@@ -343,6 +366,7 @@
         recordMessage.classList.add('success');
         recordMessage.textContent = wasEditing ? 'Registro atualizado.' : 'Registro criado. Você pode editá-lo abaixo.';
         await loadRecords();
+        loadDashboard();
       } catch (_) {
         recordMessage.textContent = 'Não foi possível conectar à API.';
       } finally {
@@ -387,6 +411,66 @@
         button.disabled = false;
       }
     });
+
+    function renderChart(containerId, items, color) {
+      const container = document.getElementById(containerId);
+      container.replaceChildren();
+      if (!items.length) {
+        const empty = document.createElement('p');
+        empty.className = 'chart-empty';
+        empty.textContent = 'Ainda não há registros.';
+        container.append(empty);
+        return;
+      }
+      const ns = 'http://www.w3.org/2000/svg';
+      const rowHeight = 30, labelWidth = 110, barArea = 150, width = 320;
+      const max = Math.max(...items.map((item) => item.total));
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', '0 0 ' + width + ' ' + (items.length * rowHeight + 4));
+      svg.setAttribute('role', 'img');
+      svg.setAttribute('aria-label', items.map((item) => item.label + ': ' + item.total).join('; '));
+      items.forEach((item, index) => {
+        const y = index * rowHeight + 2;
+        const label = document.createElementNS(ns, 'text');
+        label.setAttribute('x', '0');
+        label.setAttribute('y', String(y + 18));
+        label.setAttribute('class', 'chart-label');
+        label.textContent = item.label.length > 16 ? item.label.slice(0, 15) + '…' : item.label;
+        const bar = document.createElementNS(ns, 'rect');
+        bar.setAttribute('x', String(labelWidth));
+        bar.setAttribute('y', String(y + 4));
+        bar.setAttribute('height', '18');
+        bar.setAttribute('rx', '4');
+        bar.setAttribute('width', String(Math.max(4, Math.round(barArea * item.total / max))));
+        bar.setAttribute('fill', color);
+        const tooltip = document.createElementNS(ns, 'title');
+        tooltip.textContent = item.label + ': ' + item.total;
+        bar.append(tooltip);
+        const value = document.createElementNS(ns, 'text');
+        value.setAttribute('x', String(labelWidth + Math.max(4, Math.round(barArea * item.total / max)) + 6));
+        value.setAttribute('y', String(y + 18));
+        value.setAttribute('class', 'chart-value');
+        value.textContent = String(item.total);
+        svg.append(label, bar, value);
+      });
+      container.append(svg);
+    }
+
+    async function loadDashboard() {
+      const message = document.getElementById('dashboard-message');
+      message.textContent = '';
+      try {
+        const response = await fetch('/api/web/dashboard');
+        if (response.status === 401) { showLogin(); return; }
+        if (!response.ok) { message.textContent = 'Não foi possível carregar o dashboard.'; return; }
+        const result = await response.json();
+        renderChart('chart-category', result.by_category, '#74d7c0');
+        renderChart('chart-author', result.by_author, '#8ab4ff');
+        renderChart('chart-month', result.by_month, '#ffc978');
+      } catch (_) {
+        message.textContent = 'Não foi possível conectar à API.';
+      }
+    }
 
     async function loadRecords() {
       const requestSequence = ++listRequestSequence;
@@ -481,6 +565,7 @@
         }
         const copy = await response.json();
         await loadRecords();
+        loadDashboard();
         listMessage.textContent = 'Registro duplicado como #' + copy.id + '.';
       } catch (_) {
         listMessage.textContent = 'Não foi possível conectar à API.';
@@ -502,6 +587,7 @@
         }
         if (currentPageItems === 1 && currentPage > 1) currentPage--;
         await loadRecords();
+        loadDashboard();
         listMessage.textContent = 'Registro excluído.';
       } catch (_) {
         listMessage.textContent = 'Não foi possível conectar à API.';

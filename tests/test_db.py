@@ -361,3 +361,26 @@ def test_duplicate_record_found_missing_and_failure(monkeypatch, capsys):
     with pytest.raises(RuntimeError):
         db.duplicate_record("database-url", 7, "student", "req-dup-error")
     assert json.loads(capsys.readouterr().out)["level"] == "ERROR"
+
+
+def test_dashboard_web_reads_three_groupings_and_logs(monkeypatch, capsys):
+    _, cursor = connection_mock(monkeypatch)
+    cursor.fetchall.side_effect = [[("Git", 3), ("Docker", 1)], [("admin", 4)], [("2026-10", 1), ("2026-11", 3)]]
+    by_category, by_author, by_month = db.dashboard_web("database-url", "req-dash")
+    assert by_category == [("Git", 3), ("Docker", 1)]
+    assert by_author == [("admin", 4)]
+    assert by_month == [("2026-10", 1), ("2026-11", 3)]
+    queries = [call.args[0] for call in cursor.execute.call_args_list]
+    assert "GROUP BY topic" in queries[0] and "GROUP BY author" in queries[1]
+    assert "TO_CHAR(study_date, 'YYYY-MM')" in queries[2]
+    assert cursor.execute.call_args_list[0].args[1] == (10,)
+    assert cursor.execute.call_args_list[2].args[1] == (12,)
+    event = json.loads(capsys.readouterr().out)
+    assert event["layer"] == "db" and event["client"] == "web"
+    assert event["operation"] == "dashboard" and event["request_id"] == "req-dash"
+
+    monkeypatch.setattr(db.psycopg, "connect", MagicMock(side_effect=RuntimeError("failed")))
+    with pytest.raises(RuntimeError):
+        db.dashboard_web("database-url", "req-dash-error")
+    failure = json.loads(capsys.readouterr().out)
+    assert failure["status"] == "error" and failure["request_id"] == "req-dash-error"

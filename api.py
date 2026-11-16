@@ -347,6 +347,22 @@ def create_app(config=None, initialize=True):
         log_event("INFO", "delete", "success", g.request_id, "Record deleted")
         return "", 204
 
+    @app.get("/api/web/dashboard")
+    @login_required("dashboard")
+    def web_dashboard():
+        try:
+            by_category, by_author, by_month = db.dashboard_web(
+                app.config["DATABASE_URL"], g.request_id)
+        except Exception:
+            log_event("ERROR", "dashboard", "error", g.request_id, "Dashboard unavailable")
+            return jsonify(error="Dashboard unavailable"), 503
+        log_event("INFO", "dashboard", "success", g.request_id, "Dashboard indicators served")
+        return jsonify(
+            by_category=[{"label": label, "total": total} for label, total in by_category],
+            by_author=[{"label": label, "total": total} for label, total in by_author],
+            by_month=[{"label": label, "total": total} for label, total in by_month],
+        )
+
     @app.get("/api/cli/health")
     def cli_health():
         log_event("INFO", "health", "success", g.request_id, "CLI API healthy", "cli")

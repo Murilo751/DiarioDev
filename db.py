@@ -403,3 +403,33 @@ def duplicate_record(database_url, record_id, author, request_id):
     except Exception:
         log_event("ERROR", "web", "duplicate", "error", request_id, "Record duplication failed")
         raise
+
+
+DASHBOARD_LIMIT = 10
+MONTH_LIMIT = 12
+
+
+def dashboard_web(database_url, request_id):
+    """Count records by category, author and month with SQL of its own for the Web dashboard."""
+    try:
+        with psycopg.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT topic, COUNT(*) FROM records GROUP BY topic "
+                    "ORDER BY COUNT(*) DESC, topic ASC LIMIT %s", (DASHBOARD_LIMIT,))
+                by_category = cursor.fetchall()
+                cursor.execute(
+                    "SELECT author, COUNT(*) FROM records GROUP BY author "
+                    "ORDER BY COUNT(*) DESC, author ASC LIMIT %s", (DASHBOARD_LIMIT,))
+                by_author = cursor.fetchall()
+                cursor.execute(
+                    "SELECT month, total FROM ("
+                    "SELECT TO_CHAR(study_date, 'YYYY-MM') AS month, COUNT(*) AS total "
+                    "FROM records GROUP BY month ORDER BY month DESC LIMIT %s"
+                    ") AS latest ORDER BY month ASC", (MONTH_LIMIT,))
+                by_month = cursor.fetchall()
+        log_event("INFO", "web", "dashboard", "success", request_id, "Dashboard indicators read")
+        return by_category, by_author, by_month
+    except Exception:
+        log_event("ERROR", "web", "dashboard", "error", request_id, "Dashboard indicators failed")
+        raise

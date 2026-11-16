@@ -651,3 +651,39 @@ def test_duplicate_record_success_missing_and_failure(monkeypatch, settings, cap
 
     monkeypatch.setattr(api.db, "duplicate_record", fail)
     assert client.post("/api/web/records/1/duplicate").status_code == 503
+
+
+def test_web_dashboard_requires_login(settings):
+    client = api.create_app(settings, initialize=False).test_client()
+    assert client.get("/api/web/dashboard").status_code == 401
+
+
+def test_web_dashboard_returns_three_indicators(monkeypatch, settings, capsys):
+    client = logged_in_client(monkeypatch, settings)
+    calls = []
+
+    def dashboard(url, request_id):
+        calls.append(request_id)
+        return [("Git", 3)], [("student", 4)], [("2026-11", 4)]
+
+    monkeypatch.setattr(api.db, "dashboard_web", dashboard)
+    capsys.readouterr()
+    response = client.get("/api/web/dashboard")
+    assert response.status_code == 200
+    assert response.json == {
+        "by_category": [{"label": "Git", "total": 3}],
+        "by_author": [{"label": "student", "total": 4}],
+        "by_month": [{"label": "2026-11", "total": 4}],
+    }
+    event = json.loads(capsys.readouterr().out)
+    assert event["operation"] == "dashboard" and event["request_id"] == calls[0]
+
+
+def test_web_dashboard_database_failure(monkeypatch, settings):
+    client = logged_in_client(monkeypatch, settings)
+
+    def fail(*_):
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr(api.db, "dashboard_web", fail)
+    assert client.get("/api/web/dashboard").status_code == 503
