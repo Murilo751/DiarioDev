@@ -44,12 +44,14 @@ def menu_choice(label, choices):
 def menu_request(api_url, token, path, method="GET", payload=None, raw=False):
     try:
         status, result = call_api(api_url, path, method, payload, token, raw=raw)
-    except URLError:
+    except (URLError, TimeoutError, ConnectionError):
         raise MenuError("Não foi possível conectar à API. Confira se os serviços estão iniciados.") from None
     if status not in (200, 201):
         messages = {401: "Sessão inválida ou expirada. Entre novamente.",
                     404: "Registro não encontrado. Atualize a lista e tente novamente.",
                     503: "Serviço indisponível. Tente novamente em instantes."}
+        if path == "/api/cli/token":
+            messages[401] = "Usuário ou senha inválidos. Confira suas credenciais."
         detail = "; ".join(f"{key}: {value}" for key, value in result.get("errors", {}).items())
         raise MenuError(detail or messages.get(status, result.get("error", "Falha na API")), status)
     return result

@@ -113,36 +113,49 @@ O Dashboard conta até dez assuntos e dez autores (maiores totais, desempate alf
 
 ### Menu interativo
 
-Para usar o terminal como a interface Web, abra o menu:
+Abra o menu no terminal:
 
 ```sh
 docker compose up --build -d
 docker compose exec cli python cli.py
 ```
 
-Também pode usar `docker compose exec cli python cli.py menu`. Entre com seu usuário
-e senha; a senha não aparece na tela. O token fica somente na memória durante a
-sessão, sem precisar copiá-lo. Se ele expirar, o menu pede um novo login.
+Também pode usar `docker compose exec cli python cli.py menu`. Entre com o
+`INITIAL_USERNAME` e a senha escolhida na configuração. A senha não aparece na
+tela; o token fica somente na memória da sessão, sem precisar copiá-lo. Credenciais
+incorretas mostram uma mensagem de login inválido; token expirado pede novo login.
 
 A tela **Estudos** mostra título, assunto, data, minutos e status, com cinco
-registros por página. Digite o número da opção para adicionar um estudo, abrir
-detalhes, aplicar/limpar filtros, ordenar, exportar CSV ou abrir o **Dashboard**.
-Em **Abrir estudo**, informe um ID da página atual para editar, ativar/desativar,
-duplicar ou excluir com confirmação. No formulário de edição, Enter mantém o
-valor atual; `:voltar` cancela o formulário. Ctrl+C encerra a sessão.
+registros por página. Digite o número da opção e pressione Enter:
 
-Os filtros combinam autor, assunto e período; a exportação usa todos os resultados
-dos filtros aplicados e a mesma ordenação, inclusive outras páginas. O CSV fica no
-contêiner; para o nome padrão, copie com:
+| Opção | Ação |
+|---|---|
+| 1 | Adicionar estudo com perguntas para os cinco campos |
+| 2 | Abrir estudo da página atual pelo ID; editar, mudar status, duplicar ou excluir |
+| 3 | Aplicar ou limpar filtros por autor, assunto e período |
+| 4 | Ordenar por data, título, assunto ou minutos |
+| 5 | Exportar todos os resultados filtrados em CSV |
+| 6 | Dashboard com os mesmos três indicadores da Web |
+| 7 / 8 | Página anterior / próxima |
+| 9 | Sair da conta |
+| 0 | Encerrar o menu |
+
+Na edição, Enter mantém o valor atual. Digite `:voltar` em um formulário para
+cancelar; no campo de usuário, ele encerra o menu. Ctrl+C também encerra a sessão.
+A exclusão exige confirmação. Cadastro, edição, status, duplicação e exclusão
+aparecem na Web ao atualizar a página.
+
+O CSV respeita os filtros e a ordenação aplicados, incluindo outras páginas. O
+arquivo fica no contêiner; para copiar o nome padrão ao computador:
 
 ```sh
 docker compose cp cli:/app/registros.csv ./registros.csv
 ```
 
-O Dashboard apresenta os mesmos três indicadores da Web, com contagens e barras
-no terminal. O menu utiliza exclusivamente os endpoints autenticados da CLI e
-mantém os logs correlacionados da API e do banco. Os subcomandos abaixo continuam
+O menu usa exclusivamente os endpoints REST da CLI, sem acesso direto ao banco,
+e mantém os logs correlacionados da API e do banco. Os subcomandos abaixo continuam
 disponíveis para automação e uso direto.
+
 
 O `docker compose up -d` também inicia o contêiner `cli`. Confira a ajuda e a conexão com a API:
 
@@ -271,8 +284,10 @@ Com `db` em execução, há também testes de integração que usam schemas temp
 
 ```sh
 docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_export_integration.py'], check=True)"
-docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_duplicate_integration.py'], check=True)"
+docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_duplicate_integration.py', 'tests/test_cli_menu_integration.py'], check=True)"
 ```
+
+O teste `tests/test_cli_menu_integration.py` percorre login, cadastro, edição com valores preservados, status, duplicação, confirmação de exclusão, filtros, paginação, CSV e dashboard pelo menu, via HTTP e PostgreSQL real. Compara os dados com a API Web e verifica logs correlacionados. Cada teste usa um schema temporário próprio.
 
 Esses testes são ignorados na suíte unitária quando `TEST_DATABASE_URL` não está definida. Para verificar manualmente: crie mais de cinco estudos, use filtros combinados na Web e na CLI, compare os resultados, exporte o CSV e confira que contém todas as páginas; duplique um registro e confira os IDs na Web.
 
