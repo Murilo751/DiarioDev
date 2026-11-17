@@ -111,6 +111,52 @@ O Dashboard conta até dez assuntos e dez autores (maiores totais, desempate alf
 
 ## Usar a CLI
 
+### Menu interativo
+
+Abra o menu no terminal:
+
+```sh
+docker compose up --build -d
+docker compose exec cli python cli.py
+```
+
+Também pode usar `docker compose exec cli python cli.py menu`. Entre com o
+`INITIAL_USERNAME` e a senha escolhida na configuração. A senha não aparece na
+tela; o token fica somente na memória da sessão, sem precisar copiá-lo. Credenciais
+incorretas mostram uma mensagem de login inválido; token expirado pede novo login.
+
+A tela **Estudos** mostra título, assunto, data, minutos e status, com cinco
+registros por página. Digite o número da opção e pressione Enter:
+
+| Opção | Ação |
+|---|---|
+| 1 | Adicionar estudo com perguntas para os cinco campos |
+| 2 | Abrir estudo da página atual pelo ID; editar, mudar status, duplicar ou excluir |
+| 3 | Aplicar ou limpar filtros por autor, assunto e período |
+| 4 | Ordenar por data, título, assunto ou minutos |
+| 5 | Exportar todos os resultados filtrados em CSV |
+| 6 | Dashboard com os mesmos três indicadores da Web |
+| 7 / 8 | Página anterior / próxima |
+| 9 | Sair da conta |
+| 0 | Encerrar o menu |
+
+Na edição, Enter mantém o valor atual. Digite `:voltar` em um formulário para
+cancelar; no campo de usuário, ele encerra o menu. Ctrl+C também encerra a sessão.
+A exclusão exige confirmação. Cadastro, edição, status, duplicação e exclusão
+aparecem na Web ao atualizar a página.
+
+O CSV respeita os filtros e a ordenação aplicados, incluindo outras páginas. O
+arquivo fica no contêiner; para copiar o nome padrão ao computador:
+
+```sh
+docker compose cp cli:/app/registros.csv ./registros.csv
+```
+
+O menu usa exclusivamente os endpoints REST da CLI, sem acesso direto ao banco,
+e mantém os logs correlacionados da API e do banco. Os subcomandos abaixo continuam
+disponíveis para automação e uso direto.
+
+
 O `docker compose up -d` também inicia o contêiner `cli`. Confira a ajuda e a conexão com a API:
 
 ```sh
@@ -238,8 +284,10 @@ Com `db` em execução, há também testes de integração que usam schemas temp
 
 ```sh
 docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_export_integration.py'], check=True)"
-docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_duplicate_integration.py'], check=True)"
+docker compose run --rm --no-deps --build api python -c "import os, subprocess; os.environ['TEST_DATABASE_URL'] = os.environ['DATABASE_URL']; subprocess.run(['pytest', '-q', 'tests/test_duplicate_integration.py', 'tests/test_cli_menu_integration.py'], check=True)"
 ```
+
+O teste `tests/test_cli_menu_integration.py` percorre login, cadastro, edição com valores preservados, status, duplicação, confirmação de exclusão, filtros, paginação, CSV e dashboard pelo menu, via HTTP e PostgreSQL real. Compara os dados com a API Web e verifica logs correlacionados. Cada teste usa um schema temporário próprio.
 
 Esses testes são ignorados na suíte unitária quando `TEST_DATABASE_URL` não está definida. Para verificar manualmente: crie mais de cinco estudos, use filtros combinados na Web e na CLI, compare os resultados, exporte o CSV e confira que contém todas as páginas; duplique um registro e confira os IDs na Web.
 
