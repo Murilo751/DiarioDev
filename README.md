@@ -111,6 +111,39 @@ O Dashboard conta até dez assuntos e dez autores (maiores totais, desempate alf
 
 ## Usar a CLI
 
+### Menu interativo
+
+Para usar o terminal como a interface Web, abra o menu:
+
+```sh
+docker compose up --build -d
+docker compose exec cli python cli.py
+```
+
+Também pode usar `docker compose exec cli python cli.py menu`. Entre com seu usuário
+e senha; a senha não aparece na tela. O token fica somente na memória durante a
+sessão, sem precisar copiá-lo. Se ele expirar, o menu pede um novo login.
+
+A tela **Estudos** mostra título, assunto, data, minutos e status, com cinco
+registros por página. Digite o número da opção para adicionar um estudo, abrir
+detalhes, aplicar/limpar filtros, ordenar, exportar CSV ou abrir o **Dashboard**.
+Em **Abrir estudo**, informe um ID da página atual para editar, ativar/desativar,
+duplicar ou excluir com confirmação. No formulário de edição, Enter mantém o
+valor atual; `:voltar` cancela o formulário. Ctrl+C encerra a sessão.
+
+Os filtros combinam autor, assunto e período; a exportação usa todos os resultados
+dos filtros aplicados e a mesma ordenação, inclusive outras páginas. O CSV fica no
+contêiner; para o nome padrão, copie com:
+
+```sh
+docker compose cp cli:/app/registros.csv ./registros.csv
+```
+
+O Dashboard apresenta os mesmos três indicadores da Web, com contagens e barras
+no terminal. O menu utiliza exclusivamente os endpoints autenticados da CLI e
+mantém os logs correlacionados da API e do banco. Os subcomandos abaixo continuam
+disponíveis para automação e uso direto.
+
 O `docker compose up -d` também inicia o contêiner `cli`. Confira a ajuda e a conexão com a API:
 
 ```sh
